@@ -148,6 +148,7 @@ body {
 .hz-line {
 	position: relative; /* 标点（.hz-mark）右下角定位基准 */
 	display: inline-block;
+	vertical-align: top; /* 空临格无文字，避免 inline-block 基线退化导致格子上移 */
 	width: var(--grid-size);
 	height: var(--grid-size);
 	font-family: var(--font-kai);
