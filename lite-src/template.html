@@ -14,32 +14,48 @@
 </head>
 
 <body>
+	<!-- 顶栏：主操作（内容 / 字体 / 字格）+ 次要操作（示例 / 清空）分组 -->
 	<div class="bar">
-		<h1>墨帖 <span class="tag">Kindle 练字版</span></h1>
-		<div class="bar-btns">
-			<input type="button" id="contentBtn" value="内容">
-			<input type="button" id="fontBtn" value="字体">
-			<input type="button" id="zgBtn" value="字格">
-			<input type="button" id="sampleBtn" value="示例">
-			<input type="button" id="clearBtn" value="清空">
-		</div>
+		<span class="brand">墨帖 <span class="tag">Kindle 练字版</span></span>
+		<span class="bar-btns">
+			<span class="group">
+				<input type="button" id="contentBtn" value="内容">
+				<input type="button" id="fontBtn" value="字体">
+				<input type="button" id="zgBtn" value="字格">
+			</span>
+			<span class="group secondary">
+				<input type="button" id="sampleBtn" value="示例">
+				<input type="button" id="clearBtn" value="清空">
+			</span>
+		</span>
+	</div>
+
+	<!-- 状态栏：字数 / 页数 / 当前字 -->
+	<div class="status">
+		<span>字数 <b id="statChars">0</b></span>
+		<span>页数 <b id="statPages">1</b></span>
+		<span class="status-right">当前第 <b id="statCurrent">0</b> 字</span>
 	</div>
 
 	<!-- 预览区：整页字帖，点击字格放大 -->
 	<div class="preview">
 		<div id="printContent"></div>
-		<p class="hint">点击字格放大；按 ↑ / ↓ 逐字移动。</p>
+		<p class="hint">空格即空临格；真空行分页。按 ↑ / ↓ 逐字移动，点击字格放大。</p>
 	</div>
 
 	<!-- 弹窗：字帖内容 -->
 	<div class="modal" id="modalContent">
 		<div class="dialog">
 			<span class="dialog-title">字帖内容</span>
+			<p class="dialog-hint">换行分段 · 空行分页 · 空格即空临格</p>
 			<textarea id="content" rows="6"></textarea>
-			<div class="hint"><span id="charCount">0</span> 个汉字 · 约 <span id="pageCount">1</span> 页 · 最多 5000（换行分段，空行分页）</div>
+			<div class="dialog-btns">
+				<input type="button" id="insertSpaceBtn" class="btn-light" value="插入空格（空临格）">
+			</div>
+			<div class="stat">已输入 <b id="charCount">0</b> 个汉字 · 约 <b id="pageCount">1</b> 页 · 最多 5000</div>
 			<div class="dialog-btns">
 				<input type="button" id="contentDone" value="完成">
-				<input type="button" class="modal-cancel" value="取消">
+				<input type="button" class="modal-cancel btn-light" value="取消">
 			</div>
 		</div>
 	</div>
@@ -48,36 +64,57 @@
 	<div class="modal" id="modalFont">
 		<div class="dialog">
 			<span class="dialog-title">字体</span>
+			<p class="dialog-hint">网络地址或服务字体列表</p>
 			<input type="text" id="fontURL" placeholder="字体 URL">
-			<input type="button" id="applyFontBtn" value="应用字体">
+			<div class="dialog-btns">
+				<input type="button" id="applyFontBtn" value="应用字体">
+			</div>
 			<div class="hint" id="fontHint"></div>
 			<div id="fontList" class="font-list" style="display:none"></div>
 			<div class="dialog-btns">
-				<input type="button" class="modal-cancel" value="关闭">
+				<input type="button" class="modal-cancel btn-light" value="关闭">
 			</div>
 		</div>
 	</div>
 
-	<!-- 弹窗：字格样式 -->
+	<!-- 弹窗：字格样式（竖排大点击区） -->
 	<div class="modal" id="modalZg">
 		<div class="dialog">
 			<span class="dialog-title">字格样式</span>
-			<div class="zg-types">
+			<p class="dialog-hint">点击即生效</p>
+			<div class="zg-list">
 				<label><input type="radio" name="zgType" value="1"> 田字格</label>
 				<label><input type="radio" name="zgType" value="2"> 米字格</label>
 				<label><input type="radio" name="zgType" value="3" checked> 米字格加回字框</label>
 				<label><input type="radio" name="zgType" value="4"> 回字格</label>
 			</div>
 			<div class="dialog-btns">
-				<input type="button" class="modal-cancel" value="关闭">
+				<input type="button" class="modal-cancel btn-light" value="关闭">
 			</div>
 		</div>
 	</div>
 
-	<!-- 放大层：点击字格显示大字；点字格退出，点两侧切换 -->
+	<!-- 弹窗：清空二次确认 -->
+	<div class="modal" id="modalClear">
+		<div class="dialog">
+			<span class="dialog-title">清空内容？</span>
+			<p class="dialog-hint">将删除全部字帖内容，此操作不可撤销。</p>
+			<div class="dialog-btns">
+				<input type="button" id="clearConfirm" value="清空">
+				<input type="button" class="modal-cancel btn-light" value="取消">
+			</div>
+		</div>
+	</div>
+
+	<!-- 放大层：顶部第 N / M 字，底部大按钮 -->
 	<div class="overlay" id="zoomOverlay">
+		<div class="zoom-top">第 <b id="zoomIdx">1</b> / <b id="zoomTotal">0</b> 字 · <span id="zoomChar"></span></div>
 		<span class="zoom-cell" id="zoomCell"></span>
-		<p class="zoom-tip">点字格退出 · 点两侧切换</p>
+		<div class="zoom-ctl">
+			<input type="button" class="btn-light" id="zoomPrev" value="‹ 上一个">
+			<input type="button" id="zoomExit" value="退出">
+			<input type="button" class="btn-light" id="zoomNext" value="下一个 ›">
+		</div>
 	</div>
 
 	<script>

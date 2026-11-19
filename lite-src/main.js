@@ -120,6 +120,69 @@ import '../js/font.js';
 		else if (el.attachEvent) el.attachEvent('on' + type, fn);
 	}
 
+	function stopEvent(e) {
+		var ev = e || window.event;
+		if (ev.stopPropagation) ev.stopPropagation();
+		else ev.cancelBubble = true;
+	}
+
+	/* ==================== 统计 / 状态栏 ==================== */
+	function countChars(text) {
+		var blocks = Z.ContentModel.parse(String(text == null ? '' : text)).blocks;
+		var n = 0;
+		for (var i = 0; i < blocks.length; i++) {
+			var b = blocks[i];
+			if (b.type !== 'row') continue;
+			for (var j = 0; j < b.chars.length; j++) {
+				if (b.chars[j] !== '') n++;
+			}
+		}
+		return n;
+	}
+
+	/* 字数 / 页数实时统计（输入时只更新数字，不重排，保证 Kindle 弱性能下流畅） */
+	function updateContentStat() {
+		var textarea = byId('content');
+		var val = textarea ? textarea.value : Z.Config.Content;
+		var pages = Z.ContentModel.estimatePages(val, FIXED.gridSize, Z.Config.Cols, FIXED.rowGap);
+		setText(byId('charCount'), countChars(val));
+		setText(byId('pageCount'), pages);
+		setText(byId('statChars'), countChars(val));
+		setText(byId('statPages'), pages);
+	}
+
+	function updateStatusCurrent() {
+		var total = previewCells().length;
+		setText(byId('statCurrent'), total ? currentIdx + 1 : 0);
+	}
+
+	/* 内容弹窗：光标处插入空格（空临格） */
+	function insertSpace() {
+		var t = byId('content');
+		if (!t) return;
+		var s = (typeof t.selectionStart === 'number') ? t.selectionStart : t.value.length;
+		var e = (typeof t.selectionEnd === 'number') ? t.selectionEnd : s;
+		t.value = t.value.slice(0, s) + ' ' + t.value.slice(e);
+		Z.Config.Content = t.value;
+		Z.Config.save();
+		updateContentStat();
+		try {
+			t.focus();
+			if (t.setSelectionRange) t.setSelectionRange(s + 1, s + 1);
+		} catch (err) { /* 老浏览器忽略 */ }
+	}
+
+	/* 字格选中态：维护 label.checked（老浏览器 :checked 样式不可靠） */
+	function updateZgChecked() {
+		var nodes = document.getElementsByName('zgType');
+		for (var i = 0; i < nodes.length; i++) {
+			var lab = nodes[i].parentNode;
+			if (lab && lab.tagName === 'LABEL') {
+				lab.className = nodes[i].checked ? 'checked' : '';
+			}
+		}
+	}
+
 	/* ==================== 渲染 ==================== */
 	function applyBoxStyle(box) {
 		var size = FIXED.gridSize;
@@ -164,36 +227,49 @@ import '../js/font.js';
 		if (!container) return;
 		container.innerHTML = '';
 
-		var blocks = Z.ContentModel.parse(Z.Config.Content).blocks;
+		/* 与完整版同一口径：按纸张列数排版、行尾补满空临格，空行 / 纸张页界分页 */
+		var model = Z.ContentModel.parse(Z.Config.Content);
+		var layout = Z.ContentModel.pageLayout(
+			FIXED.gridSize, null, null, Z.Config.Cols, FIXED.rowGap, FIXED.cellGap
+		);
+		var pages = Z.ContentModel.paginate(model, layout.cols, layout.rows);
 		var count = 0;
-		for (var i = 0; i < blocks.length; i++) {
-			var block = blocks[i];
-			if (block.type === 'page') {
-				/* 空行 = 分页（仅打印时生效） */
+		for (var p = 0; p < pages.length; p++) {
+			if (p > 0) {
+				/* 分页（仅打印时生效） */
 				var br = document.createElement('div');
 				br.className = 'page-break';
 				container.appendChild(br);
-				continue;
 			}
-			var row = document.createElement('div');
-			row.className = 'row';
-			row.style.marginBottom = Math.round(FIXED.gridSize * FIXED.rowGap) + 'px';
-			for (var j = 0; j < block.chars.length; j++) {
-				row.appendChild(buildCell(
-					block.chars[j],
-					Z.Layout.cellRole(j, FIXED.template, FIXED.traceCount),
-					(block.marks || [])[j] || '',
-					count
-				));
-				if (block.chars[j] !== '') count++; /* 占位空临格不计入字数 */
+			var lines = pages[p];
+			for (var i = 0; i < lines.length; i++) {
+				var line = lines[i];
+				var row = document.createElement('div');
+				row.className = 'row';
+				row.style.marginBottom = Math.round(FIXED.gridSize * FIXED.rowGap) + 'px';
+				for (var j = 0; j < line.length; j++) {
+					var item = line[j];
+					row.appendChild(buildCell(
+						item.char,
+						Z.Layout.cellRole(j, FIXED.template, FIXED.traceCount),
+						item.mark || '',
+						count
+					));
+					if (item.char !== '') count++; /* 占位空临格不计入字数 */
+				}
+				container.appendChild(row);
 			}
-			container.appendChild(row);
 		}
 		setText(byId('charCount'), count);
 		setText(byId('pageCount'), Z.ContentModel.estimatePages(
 			Z.Config.Content, FIXED.gridSize, Z.Config.Cols, FIXED.rowGap
 		));
+		setText(byId('statChars'), count);
+		setText(byId('statPages'), Z.ContentModel.estimatePages(
+			Z.Config.Content, FIXED.gridSize, Z.Config.Cols, FIXED.rowGap
+		));
 		currentIdx = 0;
+		updateStatusCurrent();
 	}
 
 	/* ==================== 控件 ==================== */
@@ -213,10 +289,11 @@ import '../js/font.js';
 	}
 
 	function handleTextInput() {
-		/* 输入时只保存，不重排（Kindle 弱性能）；点「完成」才渲染 */
+		/* 输入时只保存 + 实时统计，不重排（Kindle 弱性能）；点「完成」才渲染 */
 		var textarea = byId('content');
 		Z.Config.Content = textarea.value;
 		Z.Config.save();
+		updateContentStat();
 	}
 
 	function applySample() {
@@ -228,6 +305,11 @@ import '../js/font.js';
 	}
 
 	function applyClear() {
+		/* 危险操作：先二次确认（见 modalClear），确认后才执行 */
+		openModal('modalClear');
+	}
+
+	function doClear() {
 		var textarea = byId('content');
 		textarea.value = '';
 		Z.Config.Content = '';
@@ -274,6 +356,7 @@ import '../js/font.js';
 		var el = cells[idx];
 		highlightCell(el);
 		scrollToCell(el);
+		updateStatusCurrent();
 	}
 
 	/* ---------- 放大层：点击字格显示大字，← / → 切换 ---------- */
@@ -283,8 +366,10 @@ import '../js/font.js';
 		if (idx < 0) idx = 0;
 		if (idx >= cells.length) idx = cells.length - 1;
 		zoomIdx = idx;
+		currentIdx = idx;
 		zoomOpen = true;
 		renderZoom();
+		updateStatusCurrent();
 		byId('zoomOverlay').style.display = 'block';
 		document.body.style.overflow = 'hidden';
 	}
@@ -325,10 +410,13 @@ import '../js/font.js';
 		box.style.backgroundSize = size + 'px ' + size + 'px';
 		box.style.color = 'rgba(' + FIXED.inkRgb + ', ' + FIXED.inkAlpha + ')';
 		setText(box, ch);
+		setText(byId('zoomIdx'), zoomIdx + 1);
+		setText(byId('zoomTotal'), cells.length);
+		setText(byId('zoomChar'), ch);
 	}
 
 	function initZoom() {
-		/* 无按钮：点中间（含字格）退出，点左右各 15% 边缘切换 */
+		/* 保留点中间（含字格）退出、点两侧边缘切换的隐式手势 */
 		on(byId('zoomOverlay'), 'click', function (e) {
 			var ev = e || window.event;
 			var w = window.innerWidth || 800;
@@ -337,6 +425,10 @@ import '../js/font.js';
 			if (x > w * 0.85) { stepZoom(1); return; }
 			closeZoom();
 		});
+		/* 明确的大按钮：‹ 上一个 / 退出 / 下一个 ›（阻挡冒泡，避免触发遮罩点击） */
+		on(byId('zoomPrev'), 'click', function (e) { stopEvent(e); stepZoom(-1); });
+		on(byId('zoomExit'), 'click', function (e) { stopEvent(e); closeZoom(); });
+		on(byId('zoomNext'), 'click', function (e) { stopEvent(e); stepZoom(1); });
 	}
 
 	/* 点击预览区的字格 → 放大；↑ / ↓ 逐字移动 */
@@ -381,7 +473,7 @@ import '../js/font.js';
 
 	/* ---------- 弹窗：内容 / 字体 / 字格样式 ---------- */
 	function modalIds() {
-		return ['modalContent', 'modalFont', 'modalZg'];
+		return ['modalContent', 'modalFont', 'modalZg', 'modalClear'];
 	}
 
 	function anyModalOpen() {
@@ -409,6 +501,7 @@ import '../js/font.js';
 		if (id === 'modalContent') {
 			var textarea = byId('content');
 			if (textarea) textarea.value = Z.Config.Content;
+			updateContentStat();
 		}
 		m.style.display = 'block';
 	}
@@ -468,6 +561,7 @@ import '../js/font.js';
 				if (value) {
 					Z.Config.ZgType = value;
 					Z.Config.save();
+					updateZgChecked();
 					render();
 				}
 			});
@@ -476,6 +570,11 @@ import '../js/font.js';
 		on(byId('applyFontBtn'), 'click', handleFontApply);
 		on(byId('sampleBtn'), 'click', applySample);
 		on(byId('clearBtn'), 'click', applyClear);
+		on(byId('clearConfirm'), 'click', function () {
+			doClear();
+			closeModal(byId('modalClear'));
+		});
+		on(byId('insertSpaceBtn'), 'click', insertSpace);
 		initModals();
 		initZoom();
 		initPreviewZoom();
@@ -487,6 +586,7 @@ import '../js/font.js';
 		textarea.value = Z.Config.Content;
 		textarea.maxLength = Z.MAX_CONTENT_LENGTH;
 		setRadioValue('zgType', Z.Config.ZgType);
+		updateZgChecked();
 
 		var fontInput = byId('fontURL');
 		if (fontInput) fontInput.value = Z.Config.fontURL;
@@ -498,6 +598,7 @@ import '../js/font.js';
 		syncForm();
 		initControls();
 		render();
+		updateContentStat();
 		loadFontList();
 	}
 
