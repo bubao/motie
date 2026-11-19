@@ -42,7 +42,7 @@ zitie/
 │   └── src/          # main.jsx / App.jsx / Panel.jsx / Preview.jsx / BigPreview.jsx / store.js / styles.css
 ├── css/main.css      # 字格 / 分页 / 打印样式（两版共用）
 ├── js/               # 共享核心（classic script + core.js ESM 层）
-├── dist/             # 完整版构建产物（单文件，gitignore）
+├── dist/             # 完整版构建产物（单文件；核心离线，拼音 / 笔顺走 CDN；gitignore）
 ├── dist-react/       # 完整版多文件产物（gitignore）
 ├── lite/             # 练字版构建产物（gitignore）
 │   └── index.html    # 单文件（离线可用）
