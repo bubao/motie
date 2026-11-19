@@ -1,6 +1,6 @@
 {
 	"name": "motie",
-	"version": "2.0.0",
+	"version": "0.0.1",
 	"private": true,
 	"description": "墨帖（motie）：完整版（普通浏览器，做字帖）+ 练字版（Kindle 等老式浏览器）",
 	"scripts": {
