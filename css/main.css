@@ -1,0 +1,361 @@
+/* ==================== 设计变量 ==================== */
+
+:root {
+	--paper: #F5F2EA;
+	--sheet: #FFFEF8;
+	--ink: #23262B;
+	--ink-soft: #6E737B;
+	--ink-faint: #9CA2AA;
+	--line: #E3DCCB;
+	--cinnabar: #B03A2C;
+	--cinnabar-deep: #8E2C21;
+	--grid-size: 80px;
+	--ink-rgb: 176, 58, 44;   /* 文字颜色（RGB 分量），由 JS 按配置覆盖 */
+	--ink-alpha: .62;         /* 文字深浅，由 JS 按配置覆盖 */
+	--row-gap: .12;           /* 行距（格倍数），由 JS 覆盖 */
+	--cell-gap: .05;          /* 字距（格倍数），由 JS 覆盖 */
+	--radius: 6px;
+	--shadow: 0 1px 2px rgba(35, 38, 43, .05), 0 10px 30px rgba(35, 38, 43, .07);
+	--dot: rgba(35, 38, 43, .04); /* 背景圆点 */
+	--ui-subtle: #F9FAFB;       /* 标签 / 次要底 */
+	--ui-active: #F7F7F8;       /* 选中态底 */
+	--ui-active-warm: #FDF3F2;  /* 选中态暖底（模板 / 字体） */
+	--font-kai: "Kaiti SC", "STKaiti", "KaiTi", "TW-Kai", "DFKai-SB", serif;
+	--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+/* 深色主题：只覆盖变量，组件样式不变（由 html 上的 data-theme 驱动） */
+html[data-theme="dark"] {
+	--paper: #16181C;
+	--sheet: #1F2227;
+	--ink: #E8E6E1;
+	--ink-soft: #A6ACB4;
+	--ink-faint: #6E737B;
+	--line: #2E3238;
+	--cinnabar: #D96A5B;
+	--cinnabar-deep: #B03A2C;
+	--shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .5);
+	--dot: rgba(255, 255, 255, .05);
+	--ui-subtle: #262A30;
+	--ui-active: #2A2E34;
+	--ui-active-warm: #3A2A28;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html, body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background-color: var(--paper);
+	background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+	background-size: 22px 22px;
+	color: var(--ink);
+	font-family: var(--font-ui);
+	font-size: 15px;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+}
+
+::selection {
+	background: rgba(176, 58, 44, .16);
+}
+
+/* ==================== 字帖正文 ==================== */
+
+#printContent {
+	display: block;
+}
+
+#printContent.is-hidden {
+	display: none;
+}
+
+/* 内容标题 */
+.sheet-title {
+	margin: 0 0 calc(var(--grid-size) * .35);
+	text-align: center;
+	font-family: var(--font-kai);
+	font-size: calc(var(--grid-size) * .55);
+	font-weight: 600;
+	letter-spacing: .12em;
+	color: var(--ink);
+}
+
+/* 一个字格 = 拼音标签 + 字格方块 */
+.cell {
+	display: inline-block;
+	vertical-align: top;
+	text-align: center;
+	margin-right: calc(var(--grid-size) * var(--cell-gap));
+}
+
+.cell:last-child {
+	margin-right: 0;
+}
+
+.cell-pinyin {
+	display: block;
+	height: calc(var(--grid-size) * .25);
+	line-height: calc(var(--grid-size) * .25);
+	font-family: "Helvetica Neue", "Arial Unicode MS", "PingFang SC", "Microsoft YaHei", sans-serif;
+	font-size: calc(var(--grid-size) * .15);
+	letter-spacing: .02em;
+	color: rgba(35, 38, 43, .62);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	user-select: none;
+}
+
+/* 拼音未就绪时保留行高，但不显示一条空白 */
+.cell-pinyin:empty {
+	visibility: hidden;
+}
+
+/* 行与分页：换行成一行；空行生成分页标记（仅打印时生效） */
+.row {
+	display: block;
+	margin-bottom: calc(var(--grid-size) * var(--row-gap));
+}
+
+.row:last-child {
+	margin-bottom: 0;
+}
+
+/* 锁定每行格数时整体居中 */
+#printContent.is-fixed-cols .row {
+	width: max-content;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+/* 每页容器：版式真源按页输出，页与页之间用 .page-break 强制分页 */
+.page-block {
+	display: block;
+}
+
+.page-break {
+	height: 0;
+	line-height: 0;
+	font-size: 0;
+}
+
+.hz-line {
+	position: relative; /* 标点（.hz-mark）右下角定位基准 */
+	display: inline-block;
+	width: var(--grid-size);
+	height: var(--grid-size);
+	font-family: var(--font-kai);
+	font-size: calc(var(--grid-size) * .725);      /* 58 / 80 */
+	line-height: calc(var(--grid-size) * 1.0625);  /* 85 / 80 */
+	text-align: center;
+	color: rgba(var(--ink-rgb), var(--ink-alpha));
+	background-repeat: no-repeat;
+	background-position: center;
+	background-size: var(--grid-size) var(--grid-size);
+	print-color-adjust: exact;
+	-webkit-print-color-adjust: exact;
+}
+
+/* 描红格：同色相、降低不透明度 */
+.hz-line.is-trace {
+	color: rgba(var(--ink-rgb), calc(var(--ink-alpha) * .5));
+}
+
+/* 字格可聚焦（键盘打开放大预览），见 Preview.jsx */
+.hz-line:focus-visible {
+	outline: 2px solid rgba(var(--ink-rgb), .9);
+	outline-offset: 1px;
+}
+
+/* 标点：不占格，附在前字右下角（T0.8）；颜色继承字格（含描红降透明度） */
+.hz-mark {
+	position: absolute;
+	right: 2%;
+	bottom: 0;
+	font-size: calc(var(--grid-size) * .3);
+	line-height: 1;
+	color: inherit;
+	pointer-events: none;
+}
+
+/* 单字编辑（T1.10）：单击字格后覆盖输入，字体 / 颜色 / 对齐继承字格 */
+.hz-edit {
+	position: absolute;
+	inset: 0;
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: 2px solid rgba(var(--ink-rgb), .55);
+	background: rgba(255, 255, 255, .78);
+	font-family: inherit;
+	font-size: inherit;
+	line-height: inherit;
+	color: inherit;
+	text-align: center;
+}
+
+/* ==================== 单字放大预览 / 笔顺动画 ==================== */
+
+.overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	background: rgba(24, 26, 30, .86);
+}
+
+.overlay.is-open {
+	display: flex;
+}
+
+.overlay-inner {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 14px;
+	padding: 34px 32px 26px;
+	background: var(--sheet);
+	border-radius: 14px;
+	box-shadow: 0 24px 64px rgba(0, 0, 0, .42);
+}
+
+.overlay.is-open .overlay-inner {
+	animation: overlay-in .18s ease-out;
+}
+
+@keyframes overlay-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.overlay-close {
+	position: absolute;
+	top: 8px;
+	right: 10px;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font-size: 22px;
+	line-height: 1;
+	color: var(--ink-faint);
+	cursor: pointer;
+	border-radius: 50%;
+}
+
+.overlay-close:hover,
+.overlay-close:focus {
+	background: rgba(0, 0, 0, .06);
+	color: var(--ink);
+}
+
+.overlay-pinyin {
+	min-height: 22px;
+	font-family: "Helvetica Neue", "Arial Unicode MS", "PingFang SC", sans-serif;
+	font-size: 18px;
+	letter-spacing: .08em;
+	color: var(--ink-soft);
+}
+
+/* 笔顺画布；加载失败时降级显示静态单字 */
+.overlay-stage {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: min(58vmin, 280px);
+	height: min(58vmin, 280px);
+	font-family: var(--font-kai);
+	font-size: 200px;
+	line-height: 1;
+	color: rgba(var(--ink-rgb), .88);
+}
+
+.overlay-stage svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.overlay-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+/* 自定义字体生效时（拼音保持清晰的无衬线字体显示声调） */
+body.custom-font .hz-line,
+body.custom-font .overlay-stage {
+	font-family: 'ziti', var(--font-kai);
+}
+
+/* ==================== 打印 ==================== */
+
+@page {
+	size: auto;
+	margin: 5mm 16mm;
+}
+
+@media print {
+	.no-print,
+	.overlay {
+		display: none !important;
+	}
+
+	/* 深色模式下打印仍输出亮色纸张（覆盖 data-theme 变量，特异性更高） */
+	html[data-theme] {
+		--paper: #F5F2EA;
+		--sheet: #FFFEF8;
+		--ink: #23262B;
+		--ink-soft: #6E737B;
+		--ink-faint: #9CA2AA;
+		--line: #E3DCCB;
+		--cinnabar: #B03A2C;
+		--cinnabar-deep: #8E2C21;
+		--shadow: 0 1px 2px rgba(35, 38, 43, .05), 0 10px 30px rgba(35, 38, 43, .07);
+		--dot: rgba(35, 38, 43, .04);
+		--ui-subtle: #F9FAFB;
+		--ui-active: #F7F7F8;
+		--ui-active-warm: #FDF3F2;
+	}
+
+	.cell-pinyin {
+		color: rgba(35, 38, 43, .78);
+	}
+
+	html, body {
+		height: auto;
+		background: #FFF !important;
+		background-image: none !important;
+	}
+
+	/* 即使处于放大预览状态，打印也输出完整字帖 */
+	#printContent,
+	#printContent.is-hidden {
+		display: block !important;
+	}
+
+	/* 内容里的空行 = 分页 */
+	.page-break {
+		break-after: page;
+		page-break-after: always;
+	}
+}

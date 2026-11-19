@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="description" content="墨帖 · 练字版（Kindle 精简版）：离线可用、整页描红，点击字格放大">
+	<!-- 版本号由 tools/build-lite.js 从 package.json 注入（占位符 __ZITIE_VERSION__） -->
+	<meta name="zitie-version" content="__ZITIE_VERSION__">
+	<title>墨帖 · 练字版</title>
+	<style>
+/*__STYLE__*/
+	</style>
+</head>
+
+<body>
+	<div class="bar">
+		<h1>墨帖 <span class="tag">Kindle 练字版</span></h1>
+		<div class="bar-btns">
+			<input type="button" id="contentBtn" value="内容">
+			<input type="button" id="fontBtn" value="字体">
+			<input type="button" id="zgBtn" value="字格">
+			<input type="button" id="sampleBtn" value="示例">
+			<input type="button" id="clearBtn" value="清空">
+		</div>
+	</div>
+
+	<!-- 预览区：整页字帖，点击字格放大 -->
+	<div class="preview">
+		<div id="printContent"></div>
+		<p class="hint">点击字格放大；按 ↑ / ↓ 逐字移动。</p>
+	</div>
+
+	<!-- 弹窗：字帖内容 -->
+	<div class="modal" id="modalContent">
+		<div class="dialog">
+			<span class="dialog-title">字帖内容</span>
+			<textarea id="content" rows="6"></textarea>
+			<div class="hint"><span id="charCount">0</span> 个汉字 · 约 <span id="pageCount">1</span> 页 · 最多 5000（换行分段，空行分页）</div>
+			<div class="dialog-btns">
+				<input type="button" id="contentDone" value="完成">
+				<input type="button" class="modal-cancel" value="取消">
+			</div>
+		</div>
+	</div>
+
+	<!-- 弹窗：字体 -->
+	<div class="modal" id="modalFont">
+		<div class="dialog">
+			<span class="dialog-title">字体</span>
+			<input type="text" id="fontURL" placeholder="字体 URL">
+			<input type="button" id="applyFontBtn" value="应用字体">
+			<div class="hint" id="fontHint"></div>
+			<div id="fontList" class="font-list" style="display:none"></div>
+			<div class="dialog-btns">
+				<input type="button" class="modal-cancel" value="关闭">
+			</div>
+		</div>
+	</div>
+
+	<!-- 弹窗：字格样式 -->
+	<div class="modal" id="modalZg">
+		<div class="dialog">
+			<span class="dialog-title">字格样式</span>
+			<div class="zg-types">
+				<label><input type="radio" name="zgType" value="1"> 田字格</label>
+				<label><input type="radio" name="zgType" value="2"> 米字格</label>
+				<label><input type="radio" name="zgType" value="3" checked> 米字格加回字框</label>
+				<label><input type="radio" name="zgType" value="4"> 回字格</label>
+			</div>
+			<div class="dialog-btns">
+				<input type="button" class="modal-cancel" value="关闭">
+			</div>
+		</div>
+	</div>
+
+	<!-- 放大层：点击字格显示大字；点字格退出，点两侧切换 -->
+	<div class="overlay" id="zoomOverlay">
+		<span class="zoom-cell" id="zoomCell"></span>
+		<p class="zoom-tip">点字格退出 · 点两侧切换</p>
+	</div>
+
+	<script>
+/*__SCRIPT__*/
+	</script>
+</body>
+
+</html>

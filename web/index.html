@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>墨帖</title>
+	<script>
+	/* 早期主题：避免深色模式首屏白闪（读取已存配置；默认跟随系统） */
+	(function () {
+		'use strict';
+		var theme = 'system';
+		try {
+			var raw = window.localStorage.getItem('zitie.config');
+			if (raw) {
+				var t = JSON.parse(raw).Theme;
+				if (t === 'light' || t === 'dark' || t === 'system') theme = t;
+			}
+		} catch (e) { /* 忽略 */ }
+		var dark = theme === 'dark' ||
+			(theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+		document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+	})();
+	</script>
+	<script>
+	/* 浏览器能力检测（原 js/detect.js 内联，ES5）：老式 / 墨水屏浏览器（Kindle 等）自动跳转到练字版。
+	   覆盖参数：?force=modern / ?force=lite / ?nodetect=1 */
+	(function () {
+		'use strict';
+		var LEGACY_UA = /kindle|silk|netfront|kobo|nook|pocketbook|boox|onyx|ireader|tolino|bookeen|storytel/i;
+
+		function supportsModern() {
+			try {
+				if (!window.CSS || typeof CSS.supports !== 'function' ||
+					!CSS.supports('color', 'var(--motie-probe)')) return false;
+				if (!('Promise' in window)) return false;
+				if (!('URL' in window) || typeof URL !== 'function') return false;
+				if (typeof Array.from !== 'function') return false;
+				if (typeof Object.assign !== 'function') return false;
+				if (!('replaceChildren' in window.Element.prototype)) return false;
+				try {
+					new Function('return import("./motie-probe.js")');
+				} catch (e) {
+					return false;
+				}
+				return /\p{Script=Han}/u.test('永');
+			} catch (e) {
+				return false;
+			}
+		}
+
+		function isLegacyDevice(ua) {
+			return LEGACY_UA.test((ua === undefined || ua === null) ? (window.navigator && navigator.userAgent) || '' : ua);
+		}
+
+		function getParam(name) {
+			var m = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search || '');
+			return m ? decodeURIComponent(m[1]) : '';
+		}
+
+		function setFlag(key, value) {
+			try { window.sessionStorage.setItem(key, value); } catch (e) { /* file:// / 隐私模式忽略 */ }
+		}
+
+		function getFlag(key) {
+			try { return window.sessionStorage.getItem(key) === '1'; } catch (e) { return false; }
+		}
+
+		function liteUrl() {
+			try { return new URL('lite/index.html', location.href).href; } catch (e) { return 'lite/index.html'; }
+		}
+
+		var result = { modern: supportsModern(), legacyUA: isLegacyDevice(), shouldSwitch: !supportsModern() || isLegacyDevice() };
+		window.ZitieDetect = { supportsModern: supportsModern, isLegacyDevice: isLegacyDevice, result: result };
+
+		if (getParam('nodetect')) return;
+		var force = getParam('force');
+		if (force === 'lite') { location.replace(liteUrl()); return; }
+		if (force === 'modern') { setFlag('motie.forceModern', '1'); return; }
+		if (result.shouldSwitch && !getFlag('motie.forceModern')) location.replace(liteUrl());
+	})();
+	</script>
+</head>
+<body>
+	<div id="root"></div>
+	<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

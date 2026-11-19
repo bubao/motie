@@ -1,0 +1,35 @@
+{
+	"name": "motie",
+	"version": "2.0.0",
+	"private": true,
+	"description": "墨帖（motie）：完整版（普通浏览器，做字帖）+ 练字版（Kindle 等老式浏览器）",
+	"scripts": {
+		"dev": "vite",
+		"serve": "node tools/serve.js",
+		"build:react": "vite build",
+		"build": "node tools/build.js",
+		"build:lite": "node tools/build-lite.js",
+		"vendor": "node tools/vendor.js",
+		"test": "node test/shared.test.js && node test/serve.test.js && node test/esm.test.js && node test/toast.test.mjs && npx vitest run && node test/smoke.test.mjs",
+		"test:unit": "node test/shared.test.js && node test/esm.test.js && node test/toast.test.mjs && npx vitest run",
+		"test:smoke": "node test/smoke.test.mjs"
+	},
+	"devDependencies": {
+		"@testing-library/dom": "^10.4.2",
+		"@testing-library/react": "^16.3.3",
+		"@vitejs/plugin-react": "^4.7.0",
+		"esbuild": "^0.21.5",
+		"jsdom": "^31.0.1",
+		"pinyin-util": "^1.2.3",
+		"vite": "^5.4.21",
+		"vite-plugin-singlefile": "^2.3.4",
+		"vitest": "^2.1.9"
+	},
+	"dependencies": {
+		"@reduxjs/toolkit": "^2.15.0",
+		"jspdf": "^2.5.1",
+		"react": "^18.3.1",
+		"react-dom": "^18.3.1",
+		"react-redux": "^9.3.1"
+	}
+}

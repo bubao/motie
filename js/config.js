@@ -1,0 +1,319 @@
+/**
+ * 常量与配置（localStorage 持久化）。
+ * 完整版与 Kindle 精简版共享此文件：完整版以 <script> 直接引入，
+ * 精简版构建时由 esbuild 一并打包（见 lite-src/main.js 顶部 import）。
+ * 各模块共享全局命名空间 Zitie，需在其他模块之前加载。
+ */
+(function (Z) {
+	'use strict';
+
+	Z.STORAGE_KEY = 'zitie.config';
+	Z.PRESETS_KEY = 'zitie.presets'; /* 具名预设（设置偏好，不含内容） */
+	Z.FONTS_KEY = 'zitie.fonts';     /* 已导入本地字体的元数据（二进制在 IndexedDB） */
+	Z.LEGACY_STORAGE_KEY = 'zitie-lite.config'; /* 精简版旧配置键，读取时迁移一次 */
+	/* 「示例」按钮填充的文本（完整版与练字版共用） */
+	Z.SAMPLE_TEXT = '天地玄黄 宇宙洪荒 日月盈昃 辰宿列张 寒来暑往 秋收冬藏';
+	/* 示例库（Panel 下拉选择；标点按 T0.8 规则不占格） */
+	Z.SAMPLES = [
+		{ name: '千字文·节选', text: '天地玄黄 宇宙洪荒 日月盈昃 辰宿列张 寒来暑往 秋收冬藏' },
+		{ name: '三字经·节选', text: '人之初，性本善。性相近，习相远。苟不教，性乃迁。教之道，贵以专。' },
+		{ name: '静夜思', text: '床前明月光，疑是地上霜。举头望明月，低头思故乡。' },
+		{ name: '登鹳雀楼', text: '白日依山尽，黄河入海流。欲穷千里目，更上一层楼。' },
+		{ name: '春晓', text: '春眠不觉晓，处处闻啼鸟。夜来风雨声，花落知多少。' },
+		{ name: '论语·学而', text: '学而时习之，不亦说乎？有朋自远方来，不亦乐乎？' }
+	];
+	Z.MAX_CONTENT_LENGTH = 5000;
+	Z.MAX_TITLE_LENGTH = 40;
+	Z.MIN_GRID_SIZE = 56;
+	Z.MAX_GRID_SIZE = 120;
+	Z.MIN_TRACE_COUNT = 1;
+	Z.MAX_TRACE_COUNT = 6;
+	Z.MIN_COLS = 1;
+	Z.MAX_COLS = 20;
+	Z.MIN_GAP = 0;
+	Z.MAX_GAP = 1;
+	Z.MIN_INK_ALPHA = 0.15;
+	Z.MAX_INK_ALPHA = 1;
+
+	/* 构建时可注入 window.ZITIE_BOOT.ResourceMode 指定默认资源来源（见 tools/build.js） */
+	var boot = window.ZITIE_BOOT || {};
+
+	Z.DEFAULTS = {
+		Content: '永',
+		Title: '',            /* 内容标题（可选，居中显示在字帖开头） */
+		Template: 'normal',   /* 排版模板：normal / trace / trace3 / lead / blank */
+		TraceCount: 3,        /* 一字三描红：每行前 N 格为深色范字 */
+		Cols: 0,              /* 每行格数：0 = 按纸张自适应 */
+		RowGap: 0.12,         /* 行距（格倍数） */
+		CellGap: 0.05,        /* 字距（格倍数） */
+		InkColor: 'cinnabar', /* 文字颜色：cinnabar / ink / ochre */
+		InkAlpha: 0.62,       /* 文字深浅 0.15–1 */
+		ZgType: '3',     /* 字格样式：1 田 / 2 米 / 3 米回 / 4 回 / 5 拼音 / 6 作文 / 7 数字（5–7 仅完整版） */
+		ZgColor: '1',    /* 字格颜色：1 绿 / 2 灰 / 3 红 */
+		GridSize: 80,    /* 格子边长（px） */
+		ShowPinyin: true,  /* 字格上方显示拼音 */
+		StrokeAnim: true,  /* 点击字格播放笔顺动画 */
+		Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
+		Margin: { top: 5, right: 16, bottom: 5, left: 16 }, /* 页边距（mm），与 @page / sheet-layout 一致 */
+		Name: '',            /* 姓名（元信息，可打印 / 导出 PDF） */
+		ShowMeta: false,     /* 每页底部显示「姓名 / 日期」 */
+		ShowPageNo: true,    /* 屏幕 / 打印 / PDF 显示页码 */
+		fontURL: '',
+		FontSource: { type: 'default' },           /* 字体来源：default 系统默认 / url 网络地址 / local 本地字体（id） */
+		PreviewText: '天地玄黄，宇宙洪荒',           /* 字体管理器的预览字样 */
+		Theme: 'system',    /* 外观：light / dark / system（跟随系统） */
+		ResourceMode: boot.ResourceMode === 'local' ? 'local' : 'cdn' /* 第三方资源来源：cdn（默认）/ local（本地 vendor，需 http 托管） */
+	};
+
+	/* 排版模板（顺序即界面顺序） */
+	Z.TEMPLATES = [
+		{ key: 'normal', name: '正常' },
+		{ key: 'trace', name: '整页描红' },
+		{ key: 'trace3', name: '一字三描红' },
+		{ key: 'lead', name: '首字范字' },
+		{ key: 'blank', name: '空临格' }
+	];
+	Z.TEMPLATE_KEYS = Z.TEMPLATES.map(function (t) { return t.key; });
+
+	/* 文字颜色 */
+	Z.INK_COLORS = {
+		cinnabar: '#B03A2C', /* 朱砂 */
+		ink: '#23262B',      /* 墨色 */
+		ochre: '#A9713A'     /* 赭石 */
+	};
+	Z.INK_COLOR_KEYS = ['cinnabar', 'ink', 'ochre'];
+
+	/* 文字颜色对应的 RGB 分量（供 CSS rgba(var(--ink-rgb), var(--ink-alpha)) 使用） */
+	Z.INK_RGB = {
+		cinnabar: '176, 58, 44',
+		ink: '35, 38, 43',
+		ochre: '169, 113, 58'
+	};
+
+	Z.ZG_TYPES = ['1', '2', '3', '4', '5', '6', '7'];
+	Z.ZG_COLORS = ['1', '2', '3'];
+
+	/* 字格配色：虚线颜色 + 边框颜色 */
+	Z.ZG_COLOR_VALUES = {
+		'1': { line: '#70d39d', border: '#00b050' }, /* 绿色 */
+		'2': { line: '#666666', border: '#111111' }, /* 灰色 */
+		'3': { line: '#bb3442', border: '#980f29' }  /* 红色 */
+	};
+
+	Z.FONT_FORMATS = {
+		woff2: 'woff2',
+		woff: 'woff',
+		ttf: 'truetype',
+		otf: 'opentype',
+		eot: 'embedded-opentype'
+	};
+
+	Z.normalize = function (value, allowed, fallback) {
+		var v = String(value);
+		return allowed.indexOf(v) !== -1 ? v : fallback;
+	};
+
+	Z.normalizeSize = function (value, fallback) {
+		var n = Number(value);
+		if (!isFinite(n)) return fallback;
+		return Math.min(Z.MAX_GRID_SIZE, Math.max(Z.MIN_GRID_SIZE, Math.round(n)));
+	};
+
+	/* 归一化整数区间 */
+	Z.normalizeInt = function (value, min, max, fallback) {
+		var n = parseInt(value, 10);
+		if (!isFinite(n)) return fallback;
+		return Math.min(max, Math.max(min, n));
+	};
+
+	/* 归一化小数区间 */
+	Z.normalizeFloat = function (value, min, max, fallback) {
+		var n = Number(value);
+		if (!isFinite(n)) return fallback;
+		return Math.min(max, Math.max(min, Math.round(n * 100) / 100));
+	};
+
+	/*
+	 * 配置字段 Schema：字段元数据的唯一真源。
+	 * type：text / enum / int / percent / bool；group 供设置面板分组渲染。
+	 * 新增字段只需在此登记，load/save 与设置层同步均按它派发。
+	 */
+	Z.ConfigSchema = {
+		Content:    { type: 'text', max: Z.MAX_CONTENT_LENGTH, group: 'content' },
+		Title:      { type: 'text', max: Z.MAX_TITLE_LENGTH, group: 'content' },
+		Template:   { type: 'enum', values: Z.TEMPLATE_KEYS, group: 'layout' },
+		TraceCount: { type: 'int', min: Z.MIN_TRACE_COUNT, max: Z.MAX_TRACE_COUNT, group: 'layout' },
+		Cols:       { type: 'int', min: 0, max: Z.MAX_COLS, group: 'layout', zeroLabel: '自适应' },
+		RowGap:     { type: 'percent', min: Z.MIN_GAP, max: Z.MAX_GAP, group: 'layout' },
+		CellGap:    { type: 'percent', min: Z.MIN_GAP, max: Z.MAX_GAP, group: 'layout' },
+		InkColor:   { type: 'enum', values: Z.INK_COLOR_KEYS, group: 'text' },
+		InkAlpha:   { type: 'percent', min: Z.MIN_INK_ALPHA, max: Z.MAX_INK_ALPHA, group: 'text' },
+		ZgType:     { type: 'enum', values: Z.ZG_TYPES, group: 'grid' },
+		ZgColor:    { type: 'enum', values: Z.ZG_COLORS, group: 'grid' },
+		GridSize:   { type: 'int', min: Z.MIN_GRID_SIZE, max: Z.MAX_GRID_SIZE, step: 2, group: 'grid' },
+		ShowPinyin: { type: 'bool', group: 'text' },
+		StrokeAnim: { type: 'bool', group: 'layout' },
+	Page:          { type: 'object', group: 'layout' },
+	Margin:        { type: 'object', group: 'layout' },
+	Name:          { type: 'text', max: 12, group: 'meta' },
+	ShowMeta:      { type: 'bool', group: 'meta' },
+	ShowPageNo:    { type: 'bool', group: 'meta' },
+	fontURL:       { type: 'text', max: 2000, group: 'font', sanitize: 'fontURL' },
+	FontSource:    { type: 'object', shape: 'fontSource', group: 'font' },
+		PreviewText:   { type: 'text', max: 40, group: 'font' },
+		Theme:         { type: 'enum', values: ['light', 'dark', 'system'], group: 'appearance' },
+		ResourceMode:  { type: 'enum', values: ['cdn', 'local'], group: 'resource' }
+	};
+
+	/* 按 Schema 归一化单个字段（load / 设置层共用） */
+	Z.normalizeField = function (key, value) {
+		var spec = Z.ConfigSchema[key];
+		if (!spec) return value;
+		var fallback = Z.DEFAULTS[key];
+		switch (spec.type) {
+			case 'text':
+				if (typeof value !== 'string') return fallback;
+				var text = value.slice(0, spec.max || undefined);
+				return spec.sanitize === 'fontURL' ? Z.sanitizeFontURL(text) : text;
+			case 'enum':
+				return Z.normalize(value, spec.values, fallback);
+			case 'int':
+				return Z.normalizeInt(value, spec.min, spec.max, fallback);
+			case 'percent':
+				return Z.normalizeFloat(value, spec.min, spec.max, fallback);
+			case 'bool':
+				return typeof value === 'boolean' ? value : fallback;
+			case 'object':
+				/* 字体来源有专属结构（default / url / local），单独归一化 */
+				if (spec.shape === 'fontSource') return Z.normalizeFontSource(value, fallback);
+				/* 结构对象（Page/Margin）：按 fallback 的键逐一校验数字，避免脏结构 */
+				if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
+				var out = {};
+				Object.keys(fallback || {}).forEach(function (k) {
+					var n = Number(value[k]);
+					out[k] = isFinite(n) ? n : fallback[k];
+				});
+				return out;
+			default:
+				return fallback;
+		}
+	};
+
+	/* 字体格式识别（完整版与精简版共用） */
+	Z.guessFontFormat = function (url) {
+		var match = String(url || '').match(/\.(woff2?|ttf|otf|eot)(?:[?#]|$)/i);
+		return match ? (Z.FONT_FORMATS[match[1].toLowerCase()] || 'truetype') : 'truetype';
+	};
+
+	/* 字体来源归一化：default（系统默认）/ url（网络地址，消毒）/ local（本地字体 id） */
+	Z.normalizeFontSource = function (value, fallback) {
+		var v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+		if (v.type === 'url') {
+			var url = Z.sanitizeFontURL(v.url);
+			return url ? { type: 'url', url: url } : fallback;
+		}
+		if (v.type === 'local' && /^[A-Za-z0-9._-]{1,64}$/.test(String(v.id))) {
+			return { type: 'local', id: String(v.id) };
+		}
+		return fallback;
+	};
+
+	/* 仅接受 http(s) 地址或相对路径（同源），避免 CSS 注入；base64 data URL 不支持 */
+	Z.sanitizeFontURL = function (url) {
+		var trimmed = String(url || '').trim();
+		if (!trimmed) return '';
+		if (/^https?:\/\/[^\s"'()]+$/i.test(trimmed)) return trimmed;
+		if (/^[a-zA-Z0-9._~/-]+$/.test(trimmed)) return trimmed; /* 相对路径，如 font/5.woff */
+		return '';
+	};
+
+	Z.Config = {
+		Content: Z.DEFAULTS.Content,
+		Title: Z.DEFAULTS.Title,
+		Template: Z.DEFAULTS.Template,
+		TraceCount: Z.DEFAULTS.TraceCount,
+		Cols: Z.DEFAULTS.Cols,
+		RowGap: Z.DEFAULTS.RowGap,
+		CellGap: Z.DEFAULTS.CellGap,
+		InkColor: Z.DEFAULTS.InkColor,
+		InkAlpha: Z.DEFAULTS.InkAlpha,
+		ZgType: Z.DEFAULTS.ZgType,
+		ZgColor: Z.DEFAULTS.ZgColor,
+		GridSize: Z.DEFAULTS.GridSize,
+		ShowPinyin: Z.DEFAULTS.ShowPinyin,
+		StrokeAnim: Z.DEFAULTS.StrokeAnim,
+		Page: Z.DEFAULTS.Page,
+		Margin: Z.DEFAULTS.Margin,
+		Name: Z.DEFAULTS.Name,
+		ShowMeta: Z.DEFAULTS.ShowMeta,
+		ShowPageNo: Z.DEFAULTS.ShowPageNo,
+		fontURL: Z.DEFAULTS.fontURL,
+		FontSource: Z.DEFAULTS.FontSource,
+		PreviewText: Z.DEFAULTS.PreviewText,
+		Theme: Z.DEFAULTS.Theme,
+		ResourceMode: Z.DEFAULTS.ResourceMode,
+
+		load: function () {
+			try {
+				var raw = window.localStorage.getItem(Z.STORAGE_KEY);
+				/* 旧精简版配置键迁移到统一键，迁移后删除旧键 */
+				if (!raw && Z.LEGACY_STORAGE_KEY) {
+					var legacy = window.localStorage.getItem(Z.LEGACY_STORAGE_KEY);
+					if (legacy) {
+						raw = legacy;
+						try { window.localStorage.setItem(Z.STORAGE_KEY, legacy); } catch (e) { /* 忽略 */ }
+						try { window.localStorage.removeItem(Z.LEGACY_STORAGE_KEY); } catch (e) { /* 忽略 */ }
+					}
+				}
+				var saved = raw ? JSON.parse(raw) : {};
+				var self = this;
+				/* 统一按 Schema 归一化（Content/Title 超长会被截断） */
+				Object.keys(Z.ConfigSchema).forEach(function (key) {
+					self[key] = Z.normalizeField(key, saved[key]);
+				});
+				/* 旧版「描红模式」映射为模板（仅当未显式保存过模板时） */
+				if (saved.Template == null && saved.TraceMode === true) this.Template = 'trace';
+				/* 旧版 fontURL 字段迁移为 FontSource（仅当未显式保存过来源时） */
+				if (saved.FontSource == null && this.fontURL) {
+					this.FontSource = { type: 'url', url: this.fontURL };
+				}
+			} catch (e) {
+				/* localStorage 不可用（隐私模式等）时静默降级为默认配置 */
+			}
+		},
+
+		save: function () {
+			try {
+				window.localStorage.setItem(Z.STORAGE_KEY, JSON.stringify(this.snapshot()));
+			} catch (e) {
+				/* 写入失败（配额/禁用）时忽略 */
+			}
+		},
+
+		/* 当前配置的白名单快照（导出 JSON / 保存预设共用） */
+		snapshot: function () {
+			var data = {};
+			var self = this;
+			Object.keys(Z.ConfigSchema).forEach(function (key) { data[key] = self[key]; });
+			return data;
+		},
+
+		/* 具名预设：只读写字首选项，不参与 Config 持久化 */
+		loadPresets: function () {
+			try { return JSON.parse(window.localStorage.getItem(Z.PRESETS_KEY)) || {}; }
+			catch (e) { return {}; }
+		},
+		savePreset: function (name, data) {
+			var all = this.loadPresets();
+			all[name] = data;
+			try { window.localStorage.setItem(Z.PRESETS_KEY, JSON.stringify(all)); } catch (e) { /* 忽略 */ }
+			return all;
+		},
+		deletePreset: function (name) {
+			var all = this.loadPresets();
+			delete all[name];
+			try { window.localStorage.setItem(Z.PRESETS_KEY, JSON.stringify(all)); } catch (e) { /* 忽略 */ }
+			return all;
+		}
+	};
+})(window.Zitie = window.Zitie || {});
