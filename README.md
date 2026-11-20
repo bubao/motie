@@ -95,6 +95,10 @@ npm run serve        # 启动本地服务（dist/，0.0.0.0:8080），供 Kindle
 ## 文档
 
 - [技术说明](doc/architecture.md)：框架 / 构建、共享核心、模块清单、打印与目录结构
+- [网页功能设计](doc/web-features.md)：功能地图、优先级与分期（**当前重点**）
+- [左侧栏重设计](doc/panel-redesign.md)：诊断与 rail / 面板信息架构重排
+- [桌面版架构设计](doc/desktop-architecture.md)：Go 内核 + 内嵌 React + 平台 WebView 壳（规划中）
+- [桌面版落地 TODO](doc/desktop-plan-todo.md)：阶段 0–4 任务清单
 - [练字版（Kindle）说明](doc/lite-kindle.md)：定位与交互、服务模式（字体发布 / 列表）
 - [浏览器识别](doc/browser-detect.md)：能力探测、UA 特征与 URL 覆盖参数
 - [常见问题](doc/faq.md)
