@@ -379,7 +379,7 @@ function ContentTools({ textareaRef }) {
 }
 
 /* 版式偏好白名单（P2-8）：预设只覆盖版式字段，不含字体 / 主题 / 资源 / 内容 */
-const PRESET_KEYS = ['Template', 'TraceCount', 'Cols', 'RowGap', 'VerticalAlign', 'Page', 'Margin', 'ZgType', 'ZgColor', 'GridSize', 'ShowPinyin'];
+const PRESET_KEYS = ['Template', 'TraceCount', 'Cols', 'RowGap', 'VerticalAlign', 'Page', 'Margin', 'ZgType', 'ZgColor', 'GridSize', 'GridRatio', 'ShowPinyin'];
 
 /* 预设（S1）：版式偏好快照，只承载版式偏好，加载时保留当前内容与标题。 */
 function PresetGroup() {
@@ -647,8 +647,8 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 	/* 每行格数上限 = 当前纸张 / 格子大小可容纳的列数（与 pageLayout 联约束一致，T0.5）。
 	 * 仅依赖纸张 / 边距 / 格子大小，内容变化不重算（P3-13）。 */
 	const colsMax = useMemo(function () {
-		return Math.max(1, Z.SheetLayout.compute({ cols: 0, content: '', config: config }).cols);
-	}, [config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left, config.GridSize]);
+		return Math.max(1, Z.SheetLayout.compute({ cols: 0, content: '', gridRatio: config.GridRatio, config: config }).cols);
+	}, [config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left, config.GridSize, config.GridRatio]);
 	const colsValue = Math.min(config.Cols, colsMax);
 	/* 实际生效列数（Cols=0 自适应时取上限），供模板缩略图画足一行 */
 	const activeCols = config.Cols === 0 ? colsMax : colsValue;
@@ -665,10 +665,11 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 			cols: config.Cols,
 			rowGap: config.RowGap,
 			gridPx: config.GridSize,
+			gridRatio: config.GridRatio,
 			config: config
 		});
-		return { rows: rows, pages: layout.pages.length };
-	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left]);
+		return { rows: rows, pages: layout.pages.length, gridMm: layout.gridMm };
+	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.GridRatio, config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left]);
 
 	function field(key, value) {
 		dispatch(setField({ key: key, value: value }));
@@ -692,6 +693,8 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 		return function () { document.removeEventListener('keydown', onKeyDown); };
 	}, [dispatch]);
 
+	var gridSizeLabel = contentStats.gridMm.toFixed(1) + ' mm';
+	var ratioLabel = config.GridRatio > 0 ? '×' + (config.GridRatio / 100).toFixed(2) : '自动';
 	var pageHead = {
 		content: { title: '字帖内容', sub: '换行分段，空行分页；空格即空临格' },
 		layout: {
@@ -884,7 +887,11 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 							</div>
 						<div className="rp-field">
 							<label htmlFor="gridSize">格子大小</label>
-							<SchemaRange schemaKey="GridSize" aria-valuetext={config.GridSize + ' 像素'} display={config.GridSize + 'px'} />
+							<SchemaRange schemaKey="GridSize" aria-valuetext={gridSizeLabel} display={gridSizeLabel} />
+						</div>
+						<div className="rp-field">
+							<label htmlFor="gridRatio">宽高比</label>
+							<SchemaRange schemaKey="GridRatio" aria-valuetext={ratioLabel} display={ratioLabel} />
 						</div>
 					</Group>
 				</div>

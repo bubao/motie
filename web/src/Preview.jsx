@@ -56,12 +56,14 @@ export function Preview({ pinyinReady }) {
 			cols: config.Cols,
 			rowGap: config.RowGap,
 			gridPx: config.GridSize,
+			gridRatio: config.GridRatio,
 			config: config
 		});
-	/* 依赖必须覆盖 compute 实际读取的全部字段：ZgType 决定行盒高（拼音格 1.4×）→ 行数 / 行距，
-	 * Page / Margin 未作为 options 传入（compute 回退读 config），漏掉会导致切换字格 / 改页边距
-	 * 时命中旧缓存：行数、行距与格子实际尺寸不符，内容把纸张撑高或行距错乱。 */
-	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.ZgType, config.Page, config.Margin]);
+	/* 依赖必须覆盖 compute 实际读取的全部字段：ZgType / GridRatio 决定行盒高（拼音格 1.4×，
+	 * 宽高比可调）→ 行数 / 行距，Page / Margin 未作为 options 传入（compute 回退读 config），
+	 * 漏掉会导致切换字格 / 改页边距 / 改宽高比时命中旧缓存：行数、行距与格子实际尺寸不符，
+	 * 内容把纸张撑高或行距错乱。 */
+	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.GridRatio, config.ZgType, config.Page, config.Margin]);
 	const pageCount = layout.pages.length;
 
 	/* 按需渲染（T2.4）：观察 .rp-page 进入视口（提前 120%），仅标记渲染；
@@ -380,6 +382,8 @@ export function Preview({ pinyinReady }) {
 				className={config.Cols > 0 ? 'is-fixed-cols' : ''}
 				style={{
 					'--grid-size': mmFloorPx(layout.gridMm),
+					/* 宽高比：格子高 = 格宽 × --cell-ratio（版式真源 ratio，随字格类型 / 用户设置） */
+					'--cell-ratio': String(layout.ratio),
 					/* 行距 = 行盒高 × 配置倍率（版式真源 gapMm / gridMm），.rows 直接消费 */
 					'--row-gap': String(layout.gapMm / layout.gridMm),
 					'--ink-rgb': rgb,
@@ -485,7 +489,7 @@ export function Preview({ pinyinReady }) {
 				})}
 			</div>
 			<p className="rp-count">{charCount === 0 ? '0 个汉字 · 未开始' : charCount + ' 个汉字 · 共 ' + layout.pages.length + ' 页'}</p>
-			<BigPreview char={bigChar} strokeAnim={config.StrokeAnim} zg={zg} isPy={isPyGrid} dx={config.CharOffsetX || 0} dy={config.CharOffsetY || 0} onClose={function () { setBigChar(''); }} />
+			<BigPreview char={bigChar} strokeAnim={config.StrokeAnim} zg={zg} isPy={isPyGrid} dx={config.CharOffsetX || 0} dy={config.CharOffsetY || 0} ratio={layout.ratio} onClose={function () { setBigChar(''); }} />
 		</main>
 	);
 }

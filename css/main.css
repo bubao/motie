@@ -90,7 +90,8 @@ body {
 	color: var(--ink);
 }
 
-/* 一个字格 = 字格方块（拼音格的拼音写在格内上区，见 .cell.has-pinyin） */
+/* 一个字格 = 字格方块（拼音格的拼音写在格内上区，见 .cell.has-pinyin）；
+ * 格子高 = 格宽 × --cell-ratio（宽高比，默认 1；拼音格默认 1.4），由版式真源注入。 */
 .cell {
 	flex: 0 0 var(--grid-size);
 	width: var(--grid-size);
@@ -108,8 +109,9 @@ body {
 	top: 0;
 	left: 0;
 	right: 0;
-	height: calc(var(--grid-size) * .4);
-	line-height: calc(var(--grid-size) * .4);
+	/* 上区高 = 格高 − 下区 1.0×格 = 格宽 × (宽高比 − 1) */
+	height: calc(var(--grid-size) * (var(--cell-ratio, 1.4) - 1));
+	line-height: calc(var(--grid-size) * (var(--cell-ratio, 1.4) - 1));
 	font-family: "Helvetica Neue", "Arial Unicode MS", "PingFang SC", "Microsoft YaHei", sans-serif;
 	font-size: calc(var(--grid-size) * .15);
 	letter-spacing: .02em;
@@ -130,9 +132,9 @@ body {
 /* 拼音格汉字：下区 1.0×格（田字格正方形 0.4..1.4，顶边与四线末线共用），字号与其他字格一致 */
 .cell.has-pinyin .hz-line {
 	box-sizing: border-box;
-	height: calc(var(--grid-size) * 1.4);
-	background-size: var(--grid-size) calc(var(--grid-size) * 1.4);
-	padding-top: calc(var(--grid-size) * .4);
+	height: calc(var(--grid-size) * var(--cell-ratio, 1.4));
+	background-size: var(--grid-size) calc(var(--grid-size) * var(--cell-ratio, 1.4));
+	padding-top: calc(var(--grid-size) * (var(--cell-ratio, 1.4) - 1));
 	font-size: calc(var(--grid-size) * .725);
 	line-height: calc(var(--grid-size) * 1);
 }
@@ -170,7 +172,8 @@ body {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	gap: calc(var(--grid-size) * var(--row-gap));
+	/* 行距 = 行盒高 × 配置倍率 = 格宽 × 宽高比 × 配置倍率（--row-gap = gapMm / gridMm） */
+	gap: calc(var(--grid-size) * var(--cell-ratio, 1) * var(--row-gap));
 	flex: 1 1 auto;
 	min-height: 0;
 }
@@ -190,15 +193,15 @@ body {
 	display: inline-block;
 	vertical-align: top; /* 空临格无文字，避免 inline-block 基线退化导致格子上移 */
 	width: var(--grid-size);
-	height: var(--grid-size);
+	height: calc(var(--grid-size) * var(--cell-ratio, 1));
 	font-family: var(--font-kai);
 	font-size: calc(var(--grid-size) * .725);      /* 58 / 80 */
-	line-height: calc(var(--grid-size) * 1.0625);  /* 85 / 80 */
+	line-height: calc(var(--grid-size) * var(--cell-ratio, 1) * 1.0625);  /* 85 / 80，随格高缩放 */
 	text-align: center;
 	color: rgba(var(--ink-rgb), var(--ink-alpha));
 	background-repeat: no-repeat;
 	background-position: center;
-	background-size: var(--grid-size) var(--grid-size);
+	background-size: var(--grid-size) calc(var(--grid-size) * var(--cell-ratio, 1));
 	/* 字体在格内的位置（格倍数，由配置 CharOffsetX / CharOffsetY 经 --char-dx / --char-dy 传入） */
 	transform: translate(calc(var(--grid-size) * var(--char-dx, 0)), calc(var(--grid-size) * var(--char-dy, 0)));
 	print-color-adjust: exact;
@@ -331,7 +334,8 @@ body {
 	align-items: center;
 	justify-content: center;
 	width: min(58vmin, 280px);
-	height: min(58vmin, 280px);
+	/* 舞台高 = 宽 × 宽高比（默认 1；拼音格 1.4，与字帖格子同源） */
+	height: calc(min(58vmin, 280px) * var(--overlay-ratio, 1));
 	font-family: var(--font-kai);
 	font-size: 200px;
 	line-height: 1;
@@ -346,16 +350,17 @@ body {
 	transform: translate(calc(min(58vmin, 280px) * var(--char-dx, 0)), calc(min(58vmin, 280px) * var(--char-dy, 0)));
 }
 
-/* 拼音格（1×1.4）：画布加高到 1.4 倍，字格背景按真实比例铺满；
- * 静态字 / 笔顺 SVG 对齐下区田字格（顶边与四线末线共用，上区 0.4 倍宽），避免背景拉伸失真 */
+/* 拼音格（默认 1×1.4）：高度由 --overlay-ratio 控制（is-py 时传入 1.4）；
+ * 字格背景按真实比例铺满；静态字 / 笔顺 SVG 对齐下区田字格
+ * （顶边与四线末线共用，上区 = 宽 × (宽高比 − 1)），避免背景拉伸失真 */
 .overlay-stage.is-py {
-	height: calc(min(58vmin, 280px) * 1.4);
+	height: calc(min(58vmin, 280px) * var(--overlay-ratio, 1.4));
 }
 
 .overlay-stage.is-py svg {
 	position: absolute;
 	left: 0;
-	top: calc(min(58vmin, 280px) * .4);
+	top: calc(min(58vmin, 280px) * (var(--overlay-ratio, 1.4) - 1));
 	width: min(58vmin, 280px);
 	height: min(58vmin, 280px);
 }
@@ -369,7 +374,7 @@ body {
 .overlay-stage.is-py .overlay-stage-char {
 	position: absolute;
 	left: 0;
-	top: calc(min(58vmin, 280px) * .4);
+	top: calc(min(58vmin, 280px) * (var(--overlay-ratio, 1.4) - 1));
 	width: min(58vmin, 280px);
 	height: min(58vmin, 280px);
 	display: flex;

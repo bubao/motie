@@ -10,7 +10,7 @@ var FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabin
  * 点「播放笔顺」才加载 HanziWriter 播放（其字形为标准字形，无法套用自定义字体），失败降级为静态字。
  * 可访问性：打开时聚焦关闭按钮、Tab 在 overlay 内循环（焦点陷阱）、关闭后焦点返还触发字格。
  */
-export function BigPreview({ char, onClose, strokeAnim, zg, isPy, dx, dy }) {
+export function BigPreview({ char, onClose, strokeAnim, zg, isPy, dx, dy, ratio }) {
 	var stageRef = useRef(null);
 	var overlayRef = useRef(null);
 	var closeRef = useRef(null);
@@ -133,10 +133,12 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, dx, dy }) {
 					className={'overlay-stage' + (isPy ? ' is-py' : '')}
 					ref={stageRef}
 					style={Object.assign({
-						/* 字体在格内的水平 / 垂直偏移（格倍数），与字帖格子（Preview）同源 */
-						'--char-dx': String(dx || 0),
-						'--char-dy': String(dy || 0)
-					}, zg ? {
+					/* 字体在格内的水平 / 垂直偏移（格倍数），与字帖格子（Preview）同源 */
+					'--char-dx': String(dx || 0),
+					'--char-dy': String(dy || 0),
+					/* 宽高比：舞台高 = 宽 × ratio（与字帖格子同源） */
+					'--overlay-ratio': String(ratio || 1)
+				}, zg ? {
 						/* 字格背景：与当前版式同源（ZgType/ZgColor），铺满整个画布；静态字 / 笔顺 SVG 叠加其上 */
 						backgroundImage: zg,
 						backgroundSize: '100% 100%',

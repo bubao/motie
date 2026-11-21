@@ -101,7 +101,10 @@ var SCALE = 1.5;
 		var startY = mmPx(layout.margin.top) + titleH + mmPx(blockOffsetMm);
 		var pitch = rowBoxMm + gapMm;
 		var isPyGrid = cfg.ZgType === '5';
-		var gridH = gridDevice * (isPyGrid ? 1.4 : 1);
+		/* 格子高 = 格宽 × 宽高比（版式真源 ratio：拼音格默认 1.4，其余默认 1.0，用户可调） */
+		var gridH = gridDevice * layout.ratio;
+		/* 拼音格上区占位高度（格倍数）：上区 = 宽高比 − 1，字居下区 1.0×格；其余格字居整格 */
+		var topPad = isPyGrid ? layout.ratio - 1 : 0;
 		/* 字体在格内的水平 / 垂直偏移（格倍数），与屏幕 / 打印一致 */
 		var dx = Number(cfg.CharOffsetX) || 0;
 		var dy = Number(cfg.CharOffsetY) || 0;
@@ -119,14 +122,14 @@ var SCALE = 1.5;
 				if (role !== 'blank') {
 					ctx.font = Math.round(mmPx(gridMm * 0.725)) + 'px ' + charFontStack();
 					ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
-					ctx.fillText(char, x + gridDevice / 2 + gridDevice * dx, y + gridDevice * (isPyGrid ? 0.4 + 0.53125 : 0.53125) + gridDevice * dy);
+					ctx.fillText(char, x + gridDevice / 2 + gridDevice * dx, y + gridDevice * (topPad + 0.53125) + gridDevice * dy);
 				}
 
 				/* 标点：不占格，字格右下角（T0.8）；空临格也照画 */
 				if (item.mark) {
 					ctx.font = Math.round(mmPx(gridMm * 0.3)) + 'px ' + charFontStack();
 					ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
-					ctx.fillText(item.mark, x + gridDevice * 0.82 + gridDevice * dx, y + gridDevice * (isPyGrid ? 0.4 + 0.82 : 0.82) + gridDevice * dy);
+					ctx.fillText(item.mark, x + gridDevice * 0.82 + gridDevice * dx, y + gridDevice * (topPad + 0.82) + gridDevice * dy);
 				}
 			});
 		});

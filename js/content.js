@@ -116,9 +116,10 @@
 
 	/* 每页可容纳的行列数（按纸张与格子大小计算）；colsOverride>0 时锁定每行格数，
 	 * 但不得超过纸宽可容纳的列数（联约束：屏幕 / 打印 / PDF 三端一致，见 T0.5）。
-	 * 列数按纯格宽：cols*gridMm <= usableW（字距已移除，格子水平紧邻）。
-	 * zgType：拼音格（'5'）字格高 1.4×格（上区四线占位 0.4 + 下区田字格 1.0），行盒随之；其余 1.0×格。 */
-	function pageLayout(gridPx, page, margin, colsOverride, rowGap, zgType) {
+ * 列数按纯格宽：cols*gridMm <= usableW（字距已移除，格子水平紧邻）。
+ * zgType：拼音格（'5'）字格高 1.4×格（上区四线占位 0.4 + 下区田字格 1.0），行盒随之；其余 1.0×格。
+ * gridRatio：格子宽高比 ×100（0 = 自动，随 zgType；60–160 = 用户值），行盒高 = 格宽 × 该比例。 */
+	function pageLayout(gridPx, page, margin, colsOverride, rowGap, zgType, gridRatio) {
 		page = page || DEFAULT_PAGE;
 		margin = margin || DEFAULT_MARGIN;
 		var size = gridPx || Z.Config.GridSize;
@@ -129,9 +130,11 @@
 		var autoCols = Math.max(1, Math.floor(usableW / idealGridMm));
 		var cols = colsOverride > 0 ? Math.min(colsOverride, autoCols) : autoCols;
 		var gridMm = usableW / cols;
-		/* 行距 = 配置倍率 × 行盒高：拼音格行盒 1.4×格，行距随之等比放大；其余 1.0×格。
-		 * 这样不同字格类型的行间空白与格子高度成比例（屏幕 / 打印 / PDF 三端共用）。 */
-		var rowBoxMm = gridMm * (zgType === '5' ? 1.4 : 1);
+		/* 宽高比：0 = 自动（拼音格 1.4×，其余 1.0×）；用户值按 ×100 存储（60–160）。 */
+		var ratio = gridRatio > 0 ? Math.min(2, Math.max(0.5, gridRatio / 100)) : (zgType === '5' ? 1.4 : 1);
+		/* 行距 = 配置倍率 × 行盒高：行盒高 = 格宽 × 宽高比（默认随字格类型），行距随之等比放大；
+		 * 这样不同字格类型 / 宽高比的行间空白与格子高度成比例（屏幕 / 打印 / PDF 三端共用）。 */
+		var rowBoxMm = gridMm * ratio;
 		var gapMm = rowBoxMm * (rowGap || 0);
 		var pitchMm = rowBoxMm + gapMm;
 		/* 行数按精确行距折算：n 行占 n×行盒 + (n-1)×行距 ≤ 可用高 */
@@ -145,6 +148,7 @@
 			rowBoxMm: rowBoxMm,
 			pitchMm: pitchMm,
 			idealPitchMm: pitchMm,
+			ratio: ratio,
 			cols: cols,
 			maxCols: autoCols,
 			rows: rows
@@ -228,8 +232,8 @@
 
 	/* 估算页数（格子大小 + 可选纸张 / 边距 + 可选锁定列数 / 行距）；
 	 * page / margin 缺省时用 A4 默认纸，与 lite 固定版式口径一致。 */
-	function estimatePages(text, gridPx, colsOverride, rowGap, page, margin) {
-		var layout = pageLayout(gridPx, page, margin, colsOverride, rowGap);
+	function estimatePages(text, gridPx, colsOverride, rowGap, page, margin, gridRatio) {
+		var layout = pageLayout(gridPx, page, margin, colsOverride, rowGap, undefined, gridRatio);
 		return paginate(parse(text), layout.cols, layout.rows).length;
 	}
 

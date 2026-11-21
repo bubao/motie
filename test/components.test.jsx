@@ -487,6 +487,17 @@ describe('Preview', function () {
 		expect(rendered.container.querySelector('.page-block .sheet-title')).toBeTruthy();
 	});
 
+	it('宽高比：GridRatio 0=自动（非拼音 1.0），用户值改变 --cell-ratio 与行距', function () {
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var content = document.getElementById('printContent');
+		expect(Number(content.style.getPropertyValue('--cell-ratio'))).toBe(1);
+		act(function () { store.dispatch(setField({ key: 'GridRatio', value: 120 })); });
+		var content2 = document.getElementById('printContent');
+		expect(Number(content2.style.getPropertyValue('--cell-ratio'))).toBeCloseTo(1.2, 9);
+		/* 行距 = 行盒高（格宽 × 宽高比）× 配置倍率 → --row-gap 随宽高比放大 */
+		expect(Number(content2.style.getPropertyValue('--row-gap'))).toBeCloseTo(0.144, 9);
+	});
+
 	it('垂直对齐：.rows 按配置切换 is-top / is-bottom（默认居中无修饰 class）', function () {
 		var rendered = renderWithStore(<Preview pinyinReady={false} />);
 		var rows = rendered.container.querySelector('.page-block .rows');

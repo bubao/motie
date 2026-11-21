@@ -67,6 +67,9 @@ test('normalizeField：int / percent 区间夹取', function () {
 	assert.strictEqual(Z.normalizeField('Cols', 999), Z.MAX_COLS);
 	assert.strictEqual(Z.normalizeField('Cols', -3), 0);
 	assert.strictEqual(Z.normalizeField('GridSize', 10), Z.MIN_GRID_SIZE);
+	assert.strictEqual(Z.normalizeField('GridRatio', 120), 120);
+	assert.strictEqual(Z.normalizeField('GridRatio', 0), 0);
+	assert.strictEqual(Z.normalizeField('GridRatio', 999), Z.MAX_GRID_RATIO);
 	assert.strictEqual(Z.normalizeField('RowGap', 2), 1);
 	assert.strictEqual(Z.normalizeField('RowGap', 0.3), 0.3);
 	assert.strictEqual(Z.normalizeField('InkAlpha', 0), Z.MIN_INK_ALPHA);
@@ -547,6 +550,28 @@ test('pageLayout：拼音格行盒 1.4×格（其余 1.0×格），行数相应�
 	assert.ok(Math.abs(normal.gapMm - normal.gridMm * 0.12) < 1e-9, '非拼音格行距 = 行盒高 × 配置倍率');
 	assert.ok(Math.abs(py.gapMm - py.gridMm * 1.4 * 0.12) < 1e-9, '拼音格行距随行盒高 1.4×格等比放大');
 	assert.ok(py.rows < normal.rows, '拼音格行数应更少：' + py.rows + ' vs ' + normal.rows);
+});
+
+test('pageLayout：宽高比可调（0=自动随字格类型；60–160 用户值）', function () {
+	var Z = loadCore();
+	var auto1 = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '1', 0);
+	var auto5 = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '5', 0);
+	assert.ok(Math.abs(auto1.ratio - 1) < 1e-9, '自动：非拼音格 1.0');
+	assert.ok(Math.abs(auto5.ratio - 1.4) < 1e-9, '自动：拼音格 1.4');
+	var custom = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '1', 120);
+	assert.ok(Math.abs(custom.ratio - 1.2) < 1e-9, '用户值 ×1.20');
+	assert.ok(Math.abs(custom.rowBoxMm - custom.gridMm * 1.2) < 1e-9, '行盒高 = 格宽 × 1.2');
+	assert.ok(Math.abs(Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '1', 999).ratio - 2) < 1e-9, '上限收敛 2');
+	assert.ok(Math.abs(Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '1', 1).ratio - 0.5) < 1e-9, '下限收敛 0.5');
+});
+
+test('SheetLayout.compute：GridRatio 透传（0=自动；用户值生效）', function () {
+	var Z = loadCore();
+	var auto = Z.SheetLayout.compute({ content: '永', cols: 0, gridPx: 80, config: Z.Config });
+	assert.ok(Math.abs(auto.ratio - 1) < 1e-9, '默认自动 1.0');
+	var custom = Z.SheetLayout.compute({ content: '永', cols: 0, gridPx: 80, gridRatio: 120, config: Z.Config });
+	assert.ok(Math.abs(custom.ratio - 1.2) < 1e-9, '用户值 ×1.20');
+	assert.ok(Math.abs(custom.rowBoxMm - custom.gridMm * 1.2) < 1e-9, '行盒随宽高比');
 });
 
 test('SheetLayout.compute：每页铺满空临格行（无字也画格）', function () {

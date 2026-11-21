@@ -24,8 +24,10 @@
 	];
 	Z.MAX_CONTENT_LENGTH = 5000;
 	Z.MAX_TITLE_LENGTH = 40;
-	Z.MIN_GRID_SIZE = 56;
-	Z.MAX_GRID_SIZE = 120;
+	Z.MIN_GRID_SIZE = 40;
+	Z.MAX_GRID_SIZE = 160;
+	Z.MIN_GRID_RATIO = 60;   /* 宽高比下限（×0.60）；0 = 自动（随字格类型） */
+	Z.MAX_GRID_RATIO = 160;  /* 宽高比上限（×1.60） */
 	Z.MIN_TRACE_COUNT = 1;
 	Z.MAX_TRACE_COUNT = 6;
 	Z.MIN_COLS = 1;
@@ -54,7 +56,8 @@
 		CharOffsetY: 0,       /* 字体在格内的垂直偏移（格倍数） */
 		ZgType: '3',     /* 字格样式：1 田 / 2 米 / 3 米回 / 4 回 / 5 拼音 / 6 作文 / 7 数字（5–7 仅完整版） */
 		ZgColor: '1',    /* 字格颜色：1 绿 / 2 灰 / 3 红 */
-		GridSize: 80,    /* 格子边长（px） */
+		GridSize: 80,    /* 格子宽（px，理想值 → 决定列数，实际格宽均分铺满） */
+		GridRatio: 0,    /* 格子宽高比 ×100：0 = 自动（拼音格 1.4，其余 1.0）；60–160 = 用户值 */
 		ShowPinyin: true,  /* 预览在拼音格内上区显示拼音（仅 ZgType=5；字帖不显示） */
 		StrokeAnim: true,  /* 点击字格播放笔顺动画 */
 		Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
@@ -159,7 +162,8 @@
 		CharOffsetY: { type: 'percent', min: Z.MIN_CHAR_OFFSET, max: Z.MAX_CHAR_OFFSET, group: 'text' },
 		ZgType:     { type: 'enum', values: Z.ZG_TYPES, group: 'grid' },
 		ZgColor:    { type: 'enum', values: Z.ZG_COLORS, group: 'grid' },
-		GridSize:   { type: 'int', min: Z.MIN_GRID_SIZE, max: Z.MAX_GRID_SIZE, step: 2, group: 'grid' },
+		GridSize:   { type: 'int', min: Z.MIN_GRID_SIZE, max: Z.MAX_GRID_SIZE, step: 1, group: 'grid' },
+		GridRatio:  { type: 'int', min: 0, max: Z.MAX_GRID_RATIO, step: 5, group: 'grid', zeroLabel: '自动' },
 		ShowPinyin: { type: 'bool', group: 'text' },
 		StrokeAnim: { type: 'bool', group: 'layout' },
 	Page:          { type: 'object', group: 'layout' },

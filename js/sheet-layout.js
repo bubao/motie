@@ -60,7 +60,8 @@
 		var title = options.title != null ? options.title : cfg.Title;
 
 		var zgType = options.zgType != null ? options.zgType : cfg.ZgType;
-		var base = Z.ContentModel.pageLayout(gridPx(gridSize), page, margin, colsOverride, rowGap, zgType);
+		var gridRatio = options.gridRatio != null ? options.gridRatio : cfg.GridRatio;
+		var base = Z.ContentModel.pageLayout(gridPx(gridSize), page, margin, colsOverride, rowGap, zgType, gridRatio);
 		var titleH = title ? base.gridMm * 0.9 : 0;
 		var rowsFirst = base.rows;
 		if (titleH > 0 && base.rows > 1) rowsFirst = base.rows - 1;
@@ -106,6 +107,7 @@
 			gapMm: base.gapMm,
 			rowBoxMm: base.rowBoxMm,
 			pitchMm: base.pitchMm,
+			ratio: base.ratio,
 			pitchFirstMm: pitchFirstMm,
 			cols: base.cols,
 			rows: base.rows,
