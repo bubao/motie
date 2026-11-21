@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -55,7 +56,10 @@ const singlefile = process.env.ZITIE_SINGLEFILE === '1';
 export default defineConfig({
 	root: 'web',
 	base: './',
-	plugins: [react(), fontStaticPlugin(), versionMetaPlugin(), ...(singlefile ? [viteSingleFile()] : [])],
+	plugins: [react(), tailwindcss(), fontStaticPlugin(), versionMetaPlugin(), ...(singlefile ? [viteSingleFile()] : [])],
+	resolve: {
+		alias: { '@': path.resolve(ROOT, 'web/src') }
+	},
 	define: { __ZITIE_VERSION__: JSON.stringify(VERSION) },
 	server: {
 		port: 5173,

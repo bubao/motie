@@ -102,17 +102,61 @@ const listFonts = (fontDir) => {
 		.sort((a, b) => a.file.localeCompare(b.file));
 };
 
-const lanIPs = () => {
-	const ips = [];
-	for (const [name, list] of Object.entries(os.networkInterfaces())) {
+/* 局域网地址过滤（P2-12）：挂 VPN / 代理 TUN 时会枚举出隧道地址，手机照连失败。
+ * 只保留可用私网 / 常规地址，剔除保留段与隧道段；RFC1918 私网优先排序。 */
+const IPV4_EXCLUDED = [
+	[100, 64, 0, 0, 10],     /* CGNAT */
+	[198, 18, 0, 0, 15],     /* 基准测试保留段（常见 TUN 段） */
+	[192, 0, 2, 0, 24],      /* TEST-NET-1 */
+	[198, 51, 100, 0, 24],   /* TEST-NET-2 */
+	[203, 0, 113, 0, 24],    /* TEST-NET-3 */
+	[169, 254, 0, 0, 16],    /* 链路本地 */
+	[127, 0, 0, 0, 8]        /* 环回 */
+];
+
+const IPV4_PRIVATE = [
+	[10, 0, 0, 0, 8],
+	[172, 16, 0, 0, 12],
+	[192, 168, 0, 0, 16]
+];
+
+const ipToInt = (ip) => {
+	const parts = String(ip || '').split('.');
+	if (parts.length !== 4) return null;
+	let n = 0;
+	for (const p of parts) {
+		const v = Number(p);
+		if (!Number.isInteger(v) || v < 0 || v > 255) return null;
+		n = (n << 8) + v;
+	}
+	return n >>> 0;
+};
+
+const inCidr = (ip, net, prefix) => {
+	const ipInt = ipToInt(ip);
+	const netInt = ipToInt(net.join('.'));
+	if (ipInt == null || netInt == null) return false;
+	const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
+	return (ipInt & mask) === (netInt & mask);
+};
+
+const isPrivate = (ip) => IPV4_PRIVATE.some(([a, b, c, d, prefix]) => inCidr(ip, [a, b, c, d], prefix));
+const isExcluded = (ip) => IPV4_EXCLUDED.some(([a, b, c, d, prefix]) => inCidr(ip, [a, b, c, d], prefix));
+
+const filterLanIPs = (interfaces) => {
+	const out = [];
+	for (const [name, list] of Object.entries(interfaces || {})) {
 		for (const info of list || []) {
-			if (info && info.family === 'IPv4' && !info.internal) {
-				ips.push({ name, address: info.address });
-			}
+			if (!info || info.family !== 'IPv4' || info.internal) continue;
+			if (isExcluded(info.address)) continue;
+			out.push({ name, address: info.address, private: isPrivate(info.address) });
 		}
 	}
-	return ips;
+	out.sort((a, b) => (b.private - a.private) || a.name.localeCompare(b.name) || a.address.localeCompare(b.address));
+	return out;
 };
+
+const lanIPs = () => filterLanIPs(os.networkInterfaces());
 
 const sendJson = (res, code, data) => {
 	res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
@@ -307,6 +351,7 @@ module.exports = {
 	sanitizeFile,
 	listFonts,
 	lanIPs,
+	filterLanIPs,
 	MIME,
 	MAX_FONT_SIZE
 };

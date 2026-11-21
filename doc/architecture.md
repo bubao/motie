@@ -25,7 +25,7 @@
 
 ## 第三方库
 
-jsPDF 2.5.1（npm，编译绑定进完整版产物）、HanziWriter 2.2.2（笔顺，CDN / vendor）、pinyin-pro 3.29.5（拼音，CDN / vendor）。`pinyin-util` 曾为练字版内联依赖，T5 精简后已不再使用（保留在 package.json 未清理）。
+jsPDF 2.5.1（npm，编译绑定进完整版产物）、HanziWriter 2.2.2（笔顺，CDN / vendor）、pinyin-pro 3.29.5（拼音，CDN / vendor）。`pinyin-util` 曾为练字版内联依赖，T5 精简后已不再使用，依赖已从 `package.json` 移除。
 
 ## 打印
 

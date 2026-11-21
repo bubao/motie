@@ -81,6 +81,12 @@ export function FontManager() {
 		return '系统';
 	}
 
+	/* 预览字样输入框用当前生效字体渲染：默认系统楷体，网络 / 本地走注入的 ziti */
+	function previewFontStack() {
+		var s = config.FontSource || { type: 'default' };
+		return s.type === 'default' ? 'var(--font-kai)' : "'ziti', var(--font-kai)";
+	}
+
 	/* 预览：为每个本地字体注入独立 family，卸载时移除 */
 	useEffect(function () {
 		if (!ready || !previewCapable()) return undefined;
@@ -282,7 +288,7 @@ export function FontManager() {
 
 	return (
 		<section className="rp-group">
-			<h3 className="rp-group-title">字体</h3>
+			<h3 className="rp-group-title">字体管理</h3>
 
 			<div className="rp-field">
 				<label htmlFor="currentFont">当前字体</label>
@@ -301,11 +307,14 @@ export function FontManager() {
 				<label htmlFor="previewText">预览字样</label>
 				<input
 					id="previewText"
-					className="rp-input"
+					className="rp-input rp-font-preview-input"
+					style={{ fontFamily: previewFontStack() }}
 					maxLength={40}
+					placeholder="天地玄黄，宇宙洪荒"
 					value={config.PreviewText}
 					onChange={onPreviewText}
 				/>
+				<p className="rp-hint-note">字样同步用于下方字体预览；留空显示「永」。</p>
 			</div>
 
 			{ready ? (

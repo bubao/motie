@@ -7,12 +7,21 @@
 
 	var SVG_NS = 'http://www.w3.org/2000/svg';
 	var writer = null;
+	var watcher = null;
 
 	function isAvailable() {
 		return !!(window.HanziWriter && typeof window.HanziWriter.create === 'function');
 	}
 
 	function destroy() {
+		if (watcher) {
+			try {
+				watcher.disconnect();
+			} catch (e) {
+				/* 忽略 */
+			}
+			watcher = null;
+		}
 		if (writer) {
 			if (typeof writer.cancelAnimation === 'function') {
 				try {
@@ -45,12 +54,51 @@
 				strokeAnimationSpeed: 1,
 				delayBetweenStrokes: 0.15
 			}, options || {}));
+			/* svg 的 CSS 尺寸是画布尺寸（280），而 HanziWriter 按 width/height 选项（240）
+			 * 布局（内部 g transform 按 240 坐标系）。不设 viewBox 时用户坐标不随 CSS
+			 * 缩放，字形会按 240 排在左上角、明显偏离田字格中心。 */
+			svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+			centerGlyph(svg);
+			/* 笔画数据异步加载：DOM 填充后重算居中 */
+			if (typeof MutationObserver !== 'undefined') {
+				watcher = new MutationObserver(function () { centerGlyph(svg); });
+				watcher.observe(svg, { childList: true, subtree: true });
+			}
 			writer.animateCharacter();
 			return true;
 		} catch (e) {
 			writer = null;
 			return false;
 		}
+	}
+
+	/* 按字形实际墨迹包围盒（含轮廓）把字形中心平移到画布中心。
+	 * HanziWriter 的 g transform 以字形数据参考框（1024）的 bounds 居中，
+	 * 该 bounds 与实际笔画墨迹范围不一致（如「永」字墨迹偏左上），
+	 * 直接缩放仍会看着歪。这里解析 g 的 translate/scale，换算墨迹中心在
+	 * 240 坐标系的位置，再用 viewBox 平移对齐中心（不改 HanziWriter 内部坐标）。 */
+	function centerGlyph(svg) {
+		if (!svg) return;
+		var g = svg.querySelector('g');
+		if (!g) return;
+		var bb;
+		try {
+			bb = g.getBBox();
+		} catch (e) {
+			return;
+		}
+		if (!bb || !bb.width || !bb.height) return;
+		var t = (g.getAttribute('transform') || '').replace(/\s+/g, ' ');
+		var m = /translate\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)\s*scale\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)/.exec(t);
+		if (!m) return;
+		var tx = +m[1], ty = +m[2], sx = +m[3], sy = +m[4];
+		var x0 = tx + sx * bb.x, x1 = tx + sx * (bb.x + bb.width);
+		var y0 = ty + sy * bb.y, y1 = ty + sy * (bb.y + bb.height);
+		var cx = (Math.min(x0, x1) + Math.max(x0, x1)) / 2;
+		var cy = (Math.min(y0, y1) + Math.max(y0, y1)) / 2;
+		/* 240 = HanziWriter 的 width/height 选项（见 play），viewBox 与布局同尺寸 */
+		svg.setAttribute('viewBox',
+			(cx - 120).toFixed(2) + ' ' + (cy - 120).toFixed(2) + ' 240 240');
 	}
 
 	Z.Stroke = {

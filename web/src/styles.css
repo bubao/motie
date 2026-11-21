@@ -156,6 +156,11 @@
 	white-space: nowrap;
 }
 
+/* 更多：rail 底部次级入口（关于 / 设置导入导出） */
+.rp-rail-more {
+	color: var(--ink-faint);
+}
+
 .rp-panel {
 	flex: 0 0 272px;
 	width: 272px;
@@ -415,12 +420,79 @@
 	color: var(--ink);
 }
 
+/* ---------- 折叠区（内容工具 / 重复字统计） ---------- */
+
+.rp-fold {
+	margin-bottom: 12px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--ui-subtle);
+}
+
+.rp-fold > summary {
+	padding: 8px 10px;
+	cursor: pointer;
+	font-size: 13px;
+	color: var(--ink);
+	list-style: none;
+	user-select: none;
+}
+
+.rp-fold > summary::-webkit-details-marker {
+	display: none;
+}
+
+.rp-fold > summary::before {
+	content: '▸';
+	display: inline-block;
+	margin-right: 6px;
+	font-size: 11px;
+	color: var(--ink-faint);
+	transition: transform .12s ease-out;
+}
+
+.rp-fold[open] > summary::before {
+	transform: rotate(90deg);
+}
+
+.rp-fold-body {
+	padding: 4px 10px 10px;
+}
+
+/* 分段开关（空临格样式：实线 / 虚线） */
+.rp-seg {
+	display: inline-flex;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.rp-seg button {
+	padding: 6px 14px;
+	border: 0;
+	border-right: 1px solid var(--line);
+	background: var(--sheet);
+	color: var(--ink-soft);
+	cursor: pointer;
+	font: inherit;
+	font-size: 13px;
+}
+
+.rp-seg button:last-child {
+	border-right: 0;
+}
+
+.rp-seg button.is-active {
+	background: var(--cinnabar);
+	color: #fff;
+}
+
 /* ---------- 输出操作 ---------- */
 
 .rp-actions {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 8px;
+	gap: 12px;
 }
 
 .rp-btn {
@@ -448,6 +520,27 @@
 
 .rp-btn-primary:hover {
 	background: var(--cinnabar-deep);
+}
+
+/* busy 指示：导出 PDF 生成中（打印按钮同步禁用） */
+.rp-spinner {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	margin-right: 6px;
+	border: 2px solid var(--line);
+	border-top-color: var(--ink-soft);
+	border-radius: 50%;
+	vertical-align: -2px;
+	animation: rp-spin .7s linear infinite;
+}
+
+@keyframes rp-spin {
+	to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.rp-spinner { animation: none; }
 }
 
 .rp-btn:disabled {
@@ -502,6 +595,50 @@
 .rp-presets-name {
 	flex: 1;
 	color: var(--ink);
+}
+
+.rp-presets-ops {
+	display: inline-flex;
+	gap: 8px;
+}
+
+.rp-presets-rename {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.rp-presets-rename .rp-input {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+}
+
+.rp-presets-rename .rp-link {
+	white-space: nowrap;
+}
+
+/* 改名时旧名让位给输入框 */
+.rp-presets-item.is-renaming .rp-presets-name {
+	display: none;
+}
+
+/* 键盘焦点可见（P2-10）：面板控件统一轮廓，深色下默认轮廓不稳定 */
+.rp-btn:focus-visible,
+.rp-input:focus-visible,
+.rp-textarea:focus-visible,
+.rp-rail-item:focus-visible,
+.rp-panel-close:focus-visible,
+.rp-fold>summary:focus-visible,
+.rp-tpl button:focus-visible,
+.rp-zg-btn:focus-visible,
+.rp-swatches button:focus-visible,
+.rp-seg button:focus-visible,
+.rp-link:focus-visible {
+	outline: 2px solid var(--cinnabar);
+	outline-offset: 2px;
 }
 
 .rp-link {
@@ -568,6 +705,13 @@
 	color: var(--ink);
 }
 
+/* 预览字样输入框：大字 + 当前生效字体，输入即预览（去掉重复的只读预览） */
+.rp-font-preview-input {
+	padding: 10px 12px;
+	font-size: 22px;
+	line-height: 1.2;
+}
+
 .rp-font-info {
 	display: flex;
 	flex-direction: column;
@@ -617,9 +761,17 @@
 	margin-bottom: 0;
 }
 
+/* 缩放层：布局尺寸 = 纸张 × scale，水平居中 */
+.rp-page-zoom {
+	margin: 0 auto;
+}
+
 .rp-page-sheet {
 	/* 宽度由内联样式按 96dpi 真实像素给出（与打印 / PDF 同源），窄区横向滚动 */
 	margin: 0;
+	position: relative; /* 页码定位基准（P1-5） */
+	display: flex; /* 内容区交给 page-block 撑满（P3-19 末行贴底） */
+	flex-direction: column;
 	padding: 20px;
 	background: var(--sheet);
 	border: 1px solid var(--line);
@@ -628,8 +780,12 @@
 }
 
 .rp-page-no {
+	position: absolute; /* 屏幕：卡片外下方，保持原预览观感（P1-5） */
+	left: 0;
+	right: 0;
+	bottom: -16px;
 	max-width: 820px;
-	margin: 8px auto 0;
+	margin: 0 auto;
 	text-align: center;
 	font-size: 12px;
 	color: var(--ink-soft);
@@ -646,6 +802,48 @@
 	margin: 10px auto 0;
 	font-size: 12px;
 	color: var(--ink-soft);
+}
+
+/* 空内容引导：未输入时不渲染空页，给出开始路径（打印时随 no-print 隐藏） */
+.rp-empty {
+	max-width: 820px;
+	margin: 8px auto 0;
+	padding: 44px 24px;
+	border: 1px dashed var(--line);
+	border-radius: 10px;
+	text-align: center;
+	color: var(--ink-soft);
+}
+
+.rp-empty-icon {
+	width: 44px;
+	height: 44px;
+	margin: 0 auto 12px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	font-family: var(--font-kai);
+	font-size: 22px;
+	color: var(--ink-faint);
+}
+
+.rp-empty-title {
+	margin: 0 0 4px;
+	font-size: 15px;
+	color: var(--ink);
+}
+
+.rp-empty-sub {
+	margin: 0 0 16px;
+	font-size: 12.5px;
+}
+
+.rp-empty-btn {
+	flex: 0 0 auto;
+	min-width: 0;
+	padding: 7px 16px;
 }
 
 /* 打印时隐藏顶栏 / rail / 面板与统计行；页码按 ShowPageNo 配置显示（T2.2） */
@@ -678,13 +876,38 @@
 		page-break-after: auto;
 	}
 
+	.rp-page-zoom {
+		width: auto !important; /* 打印不缩放，尺寸由 @page 决定 */
+		height: auto !important;
+		margin: 0;
+		position: relative; /* 页码绝对定位基准（P1-5） */
+		/* 内容区高 + 页码区（≤ 下边距），整体仍落在纸张内，不产生额外页 */
+		min-height: var(--print-h, 100)mm;
+	}
+
 	.rp-page-sheet {
 		width: auto !important; /* 覆盖屏幕内联宽度，打印纸张尺寸由 @page 决定 */
 		max-width: none;
 		aspect-ratio: auto; /* 打印纸张尺寸由 @page 决定 */
+		display: flex; /* 与屏幕一致：内容区交给 page-block 撑满（P3-19） */
+		flex-direction: column;
 		border: none;
 		box-shadow: none;
 		padding: 0 !important; /* 覆盖屏幕内联页边距，打印页边距由 @page 决定 */
+		min-height: var(--print-h, 100)mm; /* 内容区撑满（页高 − 上下页边距） */
+		box-sizing: border-box;
+		transform: none !important; /* 覆盖屏幕缩放 */
+	}
+
+	.rp-page-no {
+		position: absolute; /* 固定页底（P1-5） */
+		left: 0;
+		right: 0;
+		/* 末行贴底后页码落入下边距内（P3-19），并按下边距上限收缩避免溢出（P3-20）；
+		 * line-height 收紧使页码高度 = 14.4px，与 bottom 上限一致，不压末行。 */
+		bottom: calc(-1 * min(14.4px, var(--print-mb-px, 19px)));
+		line-height: 1.2;
+		margin: 0;
 	}
 }
 
@@ -750,4 +973,105 @@
 
 @media (prefers-reduced-motion: reduce) {
 	.rp-toast { animation: none; }
+}
+
+/* 窄屏抽屉控件（P1-4）：默认隐藏，≤720px 启用 */
+.rp-panel-scrim {
+	display: none;
+}
+
+.rp-panel-close {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--sheet);
+	color: var(--ink-soft);
+	cursor: pointer;
+	font: inherit;
+	font-size: 15px;
+	line-height: 1;
+}
+
+/* 窄屏（L3）：rail 常驻 44px 图标条，面板变为覆盖式抽屉（P1-4） */
+@media (max-width: 720px) {
+	.rp-topbar {
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 8px 10px;
+	}
+
+	.rp-shell {
+		position: relative;
+		flex: 0 0 44px;
+	}
+
+	.rp-rail {
+		flex: 0 0 44px;
+		width: 44px;
+		padding: 8px 4px;
+	}
+
+	.rp-rail-name {
+		display: none;
+	}
+
+	/* 面板 = 覆盖式抽屉：默认收起，点 rail 分类打开 */
+	.rp-panel {
+		position: absolute;
+		left: 44px;
+		top: 0;
+		bottom: 0;
+		width: min(280px, calc(100vw - 44px));
+		padding: 12px;
+		background: var(--sheet);
+		border-right: 1px solid var(--line);
+		box-shadow: 12px 0 32px rgba(0, 0, 0, .18);
+		transform: translateX(-110%);
+		visibility: hidden;
+		transition: transform .18s ease, visibility .18s;
+		z-index: 30;
+	}
+
+	.rp-panel.is-open {
+		transform: none;
+		visibility: visible;
+	}
+
+	.rp-panel-scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, .35);
+		z-index: 20;
+	}
+
+	.rp-panel-close {
+		display: inline-flex;
+	}
+
+	.rp-page-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.rp-page-head h2 {
+		flex: 1 1 auto;
+	}
+}
+
+/* 资源状态行（P2-9）：assets.js renderStatus 复用 */
+.field-hint {
+	margin: 4px 0 0;
+	font-size: 12px;
+	color: var(--ink-soft);
+}
+
+.field-hint-error {
+	color: var(--cinnabar);
 }

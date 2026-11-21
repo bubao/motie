@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert');
-const { createServer, sanitizeFile } = require('../tools/serve.js');
+const { createServer, sanitizeFile, filterLanIPs } = require('../tools/serve.js');
 
 let passed = 0;
 let failed = 0;
@@ -139,6 +139,28 @@ async function main() {
 		const escape = await fetch(base + '/api/fonts/..%2F..%2Fevil.ttf', { method: 'DELETE' });
 		assert.strictEqual(escape.status, 404);
 		assert.ok(!fs.existsSync(path.join(tmp, 'evil.ttf')));
+	});
+
+	await test('filterLanIPs：排除 VPN / 隧道段，RFC1918 私网优先（P2-12）', () => {
+		const mock = {
+			'utun4': [{ family: 'IPv4', address: '198.18.0.1', internal: false }],
+			'en0': [{ family: 'IPv4', address: '10.0.0.231', internal: false }],
+			'lo0': [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
+			'awdl0': [{ family: 'IPv4', address: '169.254.1.2', internal: false }],
+			'bridge100': [{ family: 'IPv4', address: '192.0.2.5', internal: false }]
+		};
+		const out = filterLanIPs(mock);
+		assert.deepStrictEqual(out.map((x) => x.address), ['10.0.0.231']);
+		assert.strictEqual(out[0].private, true);
+		/* 无可用地址时返回空（start 不打印局域网行） */
+		assert.deepStrictEqual(filterLanIPs({ 'utun4': [{ family: 'IPv4', address: '100.64.0.9', internal: false }] }), []);
+		/* IPv6 / 缺字段忽略；私网排在非私网前 */
+		assert.deepStrictEqual(filterLanIPs({ en0: [{ family: 'IPv6', address: 'fe80::1' }] }), []);
+		const mixed = filterLanIPs({
+			'eth1': [{ family: 'IPv4', address: '8.8.8.8', internal: false }],
+			'en0': [{ family: 'IPv4', address: '192.168.1.2', internal: false }]
+		});
+		assert.deepStrictEqual(mixed.map((x) => x.address), ['192.168.1.2', '8.8.8.8']);
 	});
 
 	app.server.close();

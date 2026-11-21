@@ -3,7 +3,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Panel } from './Panel.jsx';
 import { Preview } from './Preview.jsx';
 import { ToastHost } from './ToastHost.jsx';
-import { usePdfExport } from './usePdfExport.js';
+	import { usePdfExport } from './usePdfExport.js';
+	import { usePrint } from './usePrint.js';
 import { setField } from './store.js';
 
 const THEME_NAMES = { light: '浅色', dark: '深色', system: '跟随系统' };
@@ -15,6 +16,7 @@ export default function App() {
 	const theme = useSelector(function (s) { return s.config.Theme; });
 	const dispatch = useDispatch();
 	const { busy, exportPdf } = usePdfExport();
+	const print = usePrint();
 
 	/* 外观：light / dark / system。system 时跟随系统并监听变化（打印仍白底，见 css/main.css） */
 	useEffect(function () {
@@ -56,6 +58,7 @@ export default function App() {
 					<span className="rp-brand-name">墨帖</span>
 					<span className="rp-brand-version">v{__ZITIE_VERSION__}</span>
 				</div>
+				{/* 输出动作已移入「输出」页（P2-7）：顶栏只留品牌与主题 */}
 				<div className="rp-top-actions">
 					<div className="rp-theme" role="group" aria-label="主题">
 						{THEME_KEYS.map(function (k) {
@@ -72,16 +75,10 @@ export default function App() {
 							);
 						})}
 					</div>
-					<button type="button" className="rp-btn" disabled={busy} onClick={exportPdf}>
-						{busy ? '正在生成 PDF…' : '导出 PDF'}
-					</button>
-					<button type="button" className="rp-btn rp-btn-primary" onClick={function () { window.print(); }}>
-						打印
-					</button>
 				</div>
 			</header>
 			<div className="rp-body">
-				<Panel />
+				<Panel pdfBusy={busy} onExportPdf={exportPdf} onPrint={print} />
 				<Preview pinyinReady={pinyinReady} />
 			</div>
 			<ToastHost />

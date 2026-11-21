@@ -116,27 +116,38 @@
 
 	/* 每页可容纳的行列数（按纸张与格子大小计算）；colsOverride>0 时锁定每行格数，
 	 * 但不得超过纸宽可容纳的列数（联约束：屏幕 / 打印 / PDF 三端一致，见 T0.5）。
-	 * 列数上限把字距计入行宽：cols*gridMm + (cols-1)*gapMm <= usableW。 */
-	function pageLayout(gridPx, page, margin, colsOverride, rowGap, cellGap) {
+	 * 列数按纯格宽：cols*gridMm <= usableW（字距已移除，格子水平紧邻）。
+	 * zgType：拼音格（'5'）字格高 1.4×格（上区四线占位 0.4 + 下区田字格 1.0），行盒随之；其余 1.0×格。 */
+	function pageLayout(gridPx, page, margin, colsOverride, rowGap, zgType) {
 		page = page || DEFAULT_PAGE;
 		margin = margin || DEFAULT_MARGIN;
 		var size = gridPx || Z.Config.GridSize;
 		var usableW = page.width - margin.left - margin.right;
 		var usableH = page.height - margin.top - margin.bottom;
-		var gridMm = size * MM_PER_PX;
-		var gapMm = gridMm * Math.min(Math.max(Number(cellGap) || 0, 0), 1);
-		var pitchMm = gridMm * (1.25 + (rowGap || 0)); /* 拼音行高（0.25×格）+ 字格 + 行距 */
-		var autoCols = Math.max(1, Math.floor((usableW + gapMm) / (gridMm + gapMm)));
+		var idealGridMm = size * MM_PER_PX; /* 理想格宽：决定列数 */
+		/* 列数按理想格宽；实际格宽 = 可用宽 / 列数（均分铺满，无右侧留白） */
+		var autoCols = Math.max(1, Math.floor(usableW / idealGridMm));
 		var cols = colsOverride > 0 ? Math.min(colsOverride, autoCols) : autoCols;
+		var gridMm = usableW / cols;
+		/* 行距 = 配置倍率 × 行盒高：拼音格行盒 1.4×格，行距随之等比放大；其余 1.0×格。
+		 * 这样不同字格类型的行间空白与格子高度成比例（屏幕 / 打印 / PDF 三端共用）。 */
+		var rowBoxMm = gridMm * (zgType === '5' ? 1.4 : 1);
+		var gapMm = rowBoxMm * (rowGap || 0);
+		var pitchMm = rowBoxMm + gapMm;
+		/* 行数按精确行距折算：n 行占 n×行盒 + (n-1)×行距 ≤ 可用高 */
+		var rows = Math.max(1, Math.floor((usableH + gapMm) / pitchMm));
 		return {
 			usableW: usableW,
 			usableH: usableH,
+			idealGridMm: idealGridMm,
 			gridMm: gridMm,
-			pitchMm: pitchMm,
 			gapMm: gapMm,
+			rowBoxMm: rowBoxMm,
+			pitchMm: pitchMm,
+			idealPitchMm: pitchMm,
 			cols: cols,
 			maxCols: autoCols,
-			rows: Math.max(1, Math.floor(usableH / pitchMm))
+			rows: rows
 		};
 	}
 
@@ -215,9 +226,10 @@
 		return String(text);
 	}
 
-	/* 估算页数（A4 纸 + 当前格子大小 + 可选锁定列数/行距/字距） */
-	function estimatePages(text, gridPx, colsOverride, rowGap, cellGap) {
-		var layout = pageLayout(gridPx, null, null, colsOverride, rowGap, cellGap);
+	/* 估算页数（格子大小 + 可选纸张 / 边距 + 可选锁定列数 / 行距）；
+	 * page / margin 缺省时用 A4 默认纸，与 lite 固定版式口径一致。 */
+	function estimatePages(text, gridPx, colsOverride, rowGap, page, margin) {
+		var layout = pageLayout(gridPx, page, margin, colsOverride, rowGap);
 		return paginate(parse(text), layout.cols, layout.rows).length;
 	}
 

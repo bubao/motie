@@ -5,7 +5,7 @@
  * 输出结构：
  * {
  *   page: {width, height}, margin: {top,right,bottom,left},
- *   gridMm, pitchMm, gapMm, cols, rows, rowsFirst, titleH,
+ *   gridMm, gapMm, rowBoxMm, pitchMm, cols, rows, rowsFirst, titleH,
  *   pages: [{ title: string, lines: [[{ char, role }]] }]
  * }
  * role ∈ model | trace | blank（见 Z.Layout.cellRole）。
@@ -52,7 +52,6 @@
 		var page = resolved.page;
 		var margin = resolved.margin;
 		var gridSize = options.gridPx != null ? options.gridPx : cfg.GridSize;
-		var cellGap = options.cellGap != null ? options.cellGap : cfg.CellGap;
 		var rowGap = options.rowGap != null ? options.rowGap : cfg.RowGap;
 		var colsOverride = options.cols != null ? options.cols : cfg.Cols;
 		var template = options.template || cfg.Template;
@@ -60,10 +59,14 @@
 		var content = options.content != null ? options.content : cfg.Content;
 		var title = options.title != null ? options.title : cfg.Title;
 
-		var base = Z.ContentModel.pageLayout(gridPx(gridSize), page, margin, colsOverride, rowGap, cellGap);
+		var zgType = options.zgType != null ? options.zgType : cfg.ZgType;
+		var base = Z.ContentModel.pageLayout(gridPx(gridSize), page, margin, colsOverride, rowGap, zgType);
 		var titleH = title ? base.gridMm * 0.9 : 0;
 		var rowsFirst = base.rows;
 		if (titleH > 0 && base.rows > 1) rowsFirst = base.rows - 1;
+		/* 行距为精确值（见 pageLayout），各页行距周期一致；有标题时第一页只少一行，
+		 * 行区在可用高内垂直居中（渲染侧 .rows 统一处理），无需按页重算行距。 */
+		var pitchFirstMm = base.pitchMm;
 
 		var pages = Z.ContentModel.paginate(
 			Z.ContentModel.parse(content),
@@ -75,17 +78,23 @@
 		/* 行号跨页累计：参数化模板的 decay（逐字递减）按练习进程递减 */
 		var rowNo = 0;
 		var out = pages.map(function (lines, pageIndex) {
-			return {
-				title: pageIndex === 0 ? title : '',
-				lines: lines.map(function (cells) {
-					var rowIndex = rowNo++;
-					return cells.map(function (item, index) {
-						/* 空格占位 / 行尾补满格：有格无字，一律按空临格处理 */
-						var role = item.char === '' ? 'blank' : Z.Layout.cellRole(index, template, traceCount, rowIndex);
-						return { char: item.char, mark: item.mark || '', role: role };
-					});
-				})
-			};
+			var rendered = lines.map(function (cells) {
+				var rowIndex = rowNo++;
+				return cells.map(function (item, index) {
+					/* 空格占位 / 行尾补满格：有格无字，一律按空临格处理 */
+					var role = item.char === '' ? 'blank' : Z.Layout.cellRole(index, template, traceCount, rowIndex);
+					return { char: item.char, mark: item.mark || '', role: role };
+				});
+			});
+			/* 整页铺满：页内不足目标行数时补空临格行（有字显示字，无字也画格）。
+			 * 补行不计入 rowNo，保持 decay 模板按内容行号递减的语义。 */
+			var target = pageIndex === 0 ? rowsFirst : base.rows;
+			while (rendered.length < target) {
+				var blankLine = [];
+				for (var c = 0; c < base.cols; c++) blankLine.push({ char: '', mark: '', role: 'blank' });
+				rendered.push(blankLine);
+			}
+			return { title: pageIndex === 0 ? title : '', lines: rendered };
 		});
 
 		return {
@@ -94,8 +103,10 @@
 			usableW: base.usableW,
 			usableH: base.usableH,
 			gridMm: base.gridMm,
+			gapMm: base.gapMm,
+			rowBoxMm: base.rowBoxMm,
 			pitchMm: base.pitchMm,
-			gapMm: base.gridMm * clamp(cellGap, 0, 1),
+			pitchFirstMm: pitchFirstMm,
 			cols: base.cols,
 			rows: base.rows,
 			rowsFirst: rowsFirst,

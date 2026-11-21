@@ -15,6 +15,7 @@ import { Zitie } from '../../js/core.js';
 import App from './App.jsx';
 /* 字帖本体样式（字格 / 分页 / 打印规则）交给 Vite 打包，dev 注入、build 合并 */
 import '../../css/main.css';
+import './index.css';
 import './styles.css';
 
 Zitie.Pdf.setJsPdf(jsPDF);

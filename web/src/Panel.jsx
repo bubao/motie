@@ -1,9 +1,8 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { importConfig, pushToast, setContent, setField } from './store.js';
+import { importConfig, pushToast, redoContent, setContent, setField, undoContent } from './store.js';
 import { FontManager } from './FontManager.jsx';
 import { SchemaRange, SchemaPercentRange } from './controls.jsx';
-import { usePdfExport } from './usePdfExport.js';
 import {
 	ConfigSchema,
 	INK_COLORS,
@@ -14,7 +13,8 @@ import {
 	Zitie as Z,
 	ZG_COLOR_VALUES,
 	ZG_COLORS,
-	ZG_TYPES
+	ZG_TYPES,
+	VERTICAL_ALIGNS
 } from '../../js/core.js';
 
 /* 模板缩略图：按「当前生效列数 + traceCount」用与预览同一套 Z.Layout.cellRole 生成角色，
@@ -31,7 +31,10 @@ function tplCells(template, cols, traceCount) {
 }
 
 const ZG_TYPE_NAMES = { '1': '田字格', '2': '米字格', '3': '米字回字', '4': '回字格', '5': '拼音格', '6': '作文格', '7': '数字格' };
+const ZG_COLOR_NAMES = { '1': '绿色', '2': '灰色', '3': '红色' };
 const INK_NAMES = { cinnabar: '朱砂', ink: '墨色', ochre: '赭石' };
+/* 行区垂直对齐（行距不变，只改空白分布） */
+const VERTICAL_ALIGN_NAMES = { center: '居中', top: '靠顶', bottom: '靠底' };
 
 /* 常用纸张预设（mm）；自定义尺寸不匹配任何预设时 select 回退到 custom */
 const PAGE_PRESETS = [
@@ -59,7 +62,8 @@ const ICONS = {
 	grid: <RailIcon d={<><rect x="4" y="4" width="16" height="16" rx="1.5" /><rect x="9" y="9" width="6" height="6" /></>} />,
 	text: <RailIcon d={<><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z" /><path d="M14 7l3 3" /></>} />,
 	output: <RailIcon d={<><path d="M7 8V4h10v4" /><rect x="4" y="8" width="16" height="8" rx="1.5" /><path d="M7 16h10v4H7z" /></>} />,
-	about: <RailIcon d={<><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></>} />
+	/* 更多：横向三点的实心圆（RailIcon 默认描边，这里覆盖为填充） */
+	more: <RailIcon d={<><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" /></>} />
 };
 
 const RAIL_MAIN = [
@@ -158,7 +162,7 @@ function PageGroup() {
 									max="60"
 									step="0.5"
 									value={config.Margin[key]}
-									onChange={function (e) { setMargin({ key: num(e.target.value, config.Margin[key]) }); }}
+									onChange={function (e) { setMargin({ [key]: num(e.target.value, config.Margin[key]) }); }}
 								/>
 							</label>
 						);
@@ -211,13 +215,31 @@ function MetaGroup() {
 	);
 }
 
-/* 内容工具（T1.3）：示例库 / 导入导出 txt / 重复字统计。
-   导入只做纯文本读取，导出用 Blob 下载；重复字由共享核心 ContentModel.hanStats 统计。 */
+/* 内容工具（C1–C4）：示例库与导入导出收进「内容工具」折叠区，「清空」需二次确认；
+   重复字统计独立折叠。导入只做纯文本读取，导出用 Blob 下载。 */
 function ContentTools({ textareaRef }) {
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
 	const fileRef = useRef(null);
-	const stats = Z.ContentModel.hanStats(config.Content);
+	const [confirming, setConfirming] = useState(false);
+	/* 重复字统计：仅内容变化时重算（P3-13） */
+	const stats = useMemo(function () {
+		return Z.ContentModel.hanStats(config.Content);
+	}, [config.Content]);
+
+	/* 当前版式每页行数：用于「插入空白页」按版式生成一整页空临格 */
+	var layoutInfo = useMemo(function () {
+		return Z.SheetLayout.compute({
+			content: config.Content,
+			title: config.Title,
+			template: config.Template,
+			traceCount: config.TraceCount,
+			cols: config.Cols,
+			rowGap: config.RowGap,
+			gridPx: config.GridSize,
+			config: config
+		});
+	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize]);
 
 	/* 在内容框光标处插入一个空格 = 一个空临格（有格无字） */
 	function insertSpace() {
@@ -233,6 +255,22 @@ function ContentTools({ textareaRef }) {
 			var pos = start + 1;
 			if (node.setSelectionRange) node.setSelectionRange(pos, pos);
 		}, 0);
+	}
+
+	/* 在内容末尾追加一个独立的一整页空临格（行数 = 当前版式每页行数）。
+	 * 空行 = 分页，保证与已有内容分成两页；每行一个空格即可，行尾由补满逻辑填满整行格数。 */
+	function insertBlankPage() {
+		var text = String(config.Content == null ? '' : config.Content);
+		var rows = Math.max(1, layoutInfo.rows || 1);
+		var lines = [];
+		for (var i = 0; i < rows; i++) lines.push(' ');
+		var next = text.trim() === ''
+			? lines.join('\n')
+			: text.replace(/\s+$/, '') + '\n\n' + lines.join('\n');
+		dispatch(setContent(next));
+		dispatch(pushToast({ type: 'success', text: '已新增一整页空临格。' }));
+		/* 定位到新增页：通知预览滚动到末页（仅该主动操作触发） */
+		window.dispatchEvent(new CustomEvent('zitie:goto-last-page'));
 	}
 
 	function onFileChange(e) {
@@ -263,64 +301,235 @@ function ContentTools({ textareaRef }) {
 		dispatch(pushToast({ type: 'success', text: '已导出文本。' }));
 	}
 
+	/* 清空：二次确认；确认后内容清空，可用 Ctrl/Cmd+Z 撤销 */
+	function doClear() {
+		dispatch(setContent(''));
+		setConfirming(false);
+		dispatch(pushToast({ type: 'success', text: '已清空，可按 Ctrl/Cmd+Z 撤销。' }));
+	}
+
 	return (
-		<div className="rp-field">
-			<label htmlFor="sampleSelect">示例库</label>
-			<select
-				id="sampleSelect"
-				className="rp-input"
-				value=""
-				onChange={function (e) {
-					var sample = SAMPLES.filter(function (s) { return s.name === e.target.value; })[0];
-					if (sample) dispatch(setContent(sample.text));
-				}}
-			>
-				<option value="">选择示例…</option>
-				{SAMPLES.map(function (s) { return <option key={s.name} value={s.name}>{s.name}</option>; })}
-			</select>
-			<div className="rp-actions">
-				<button type="button" className="rp-btn" onClick={insertSpace}>插入空格</button>
-				<button type="button" className="rp-btn" onClick={function () { dispatch(setContent(SAMPLE_TEXT)); }}>示例</button>
-				<button type="button" className="rp-btn" onClick={onExport}>导出 txt</button>
-				<button type="button" className="rp-btn" onClick={function () { if (fileRef.current) fileRef.current.click(); }}>导入 txt</button>
-				<button type="button" className="rp-btn" onClick={function () { dispatch(setContent('')); }}>清空</button>
-			</div>
-			<input
-				ref={fileRef}
-				type="file"
-				accept=".txt,text/plain"
-				style={{ display: 'none' }}
-				onChange={onFileChange}
-			/>
-			<div className="rp-stats">
-				{stats.length === 0
-					? <span className="rp-stats-empty">无重复字</span>
-					: stats.slice(0, 12).map(function (item) {
-						return <span key={item.char} className="rp-stats-item">{item.char}×{item.count}</span>;
-					})}
-				{stats.length > 12 && <span className="rp-stats-item">…</span>}
-			</div>
-		</div>
+		<>
+			{/* 示例库高频，默认展开（P2-7），无需二次点击 */}
+			<details className="rp-fold" open>
+				<summary>示例库</summary>
+				<div className="rp-fold-body">
+					<div className="rp-field">
+						<label htmlFor="sampleSelect">选择示例</label>
+						<select
+							id="sampleSelect"
+							className="rp-input"
+							value=""
+							onChange={function (e) {
+								var sample = SAMPLES.filter(function (s) { return s.name === e.target.value; })[0];
+								if (sample) dispatch(setContent(sample.text));
+							}}
+						>
+							<option value="">选择示例…</option>
+							{SAMPLES.map(function (s) { return <option key={s.name} value={s.name}>{s.name}</option>; })}
+						</select>
+					</div>
+				</div>
+			</details>
+			<details className="rp-fold">
+				<summary>内容工具</summary>
+				<div className="rp-fold-body">
+					<div className="rp-field">
+						<label>插入 / 导入导出</label>
+						<div className="rp-actions">
+							<button type="button" className="rp-btn" onClick={insertSpace}>插入空格</button>
+							<button type="button" className="rp-btn" onClick={insertBlankPage} title={'按当前版式每页 ' + layoutInfo.rows + ' 行追加一整页空临格'}>插入空白页</button>
+							<button type="button" className="rp-btn" onClick={function () { if (fileRef.current) fileRef.current.click(); }}>导入 txt</button>
+							<button type="button" className="rp-btn" onClick={onExport}>导出 txt</button>
+							{confirming ? (
+								<>
+									<button type="button" className="rp-btn rp-btn-primary" onClick={doClear}>确认清空</button>
+									<button type="button" className="rp-btn" onClick={function () { setConfirming(false); }}>取消</button>
+								</>
+							) : (
+								<button type="button" className="rp-btn" onClick={function () { setConfirming(true); }}>清空</button>
+							)}
+						</div>
+						<input
+							ref={fileRef}
+							type="file"
+							accept=".txt,text/plain"
+							style={{ display: 'none' }}
+							onChange={onFileChange}
+						/>
+					</div>
+				</div>
+			</details>
+
+			<details className="rp-fold">
+				<summary>重复字统计{stats.length > 0 ? '（' + stats.length + '）' : ''}</summary>
+				<div className="rp-fold-body">
+					<div className="rp-stats">
+						{stats.length === 0
+							? <span className="rp-stats-empty">无重复字</span>
+							: stats.slice(0, 12).map(function (item) {
+								return <span key={item.char} className="rp-stats-item">{item.char}×{item.count}</span>;
+							})}
+						{stats.length > 12 && <span className="rp-stats-item">…</span>}
+					</div>
+				</div>
+			</details>
+		</>
 	);
 }
 
-/* 设置导出 / 导入 / 预设（T1.4）。预设只承载偏好（不含 Content / Title），加载时保留当前内容与标题。 */
-function SettingsGroup() {
+/* 版式偏好白名单（P2-8）：预设只覆盖版式字段，不含字体 / 主题 / 资源 / 内容 */
+const PRESET_KEYS = ['Template', 'TraceCount', 'Cols', 'RowGap', 'VerticalAlign', 'Page', 'Margin', 'ZgType', 'ZgColor', 'GridSize', 'ShowPinyin'];
+
+/* 预设（S1）：版式偏好快照，只承载版式偏好，加载时保留当前内容与标题。 */
+function PresetGroup() {
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
-	const fileRef = useRef(null);
 	const [presetName, setPresetName] = useState('');
 	const [presets, setPresets] = useState(function () { return Z.Config.loadPresets(); });
 	const [hint, setHint] = useState('');
+	const [renamingName, setRenamingName] = useState(null);
+	const [renameValue, setRenameValue] = useState('');
 
 	function presetSnapshot() {
 		var data = {};
-		Object.keys(ConfigSchema).forEach(function (k) {
-			if (k === 'Content' || k === 'Title') return;
-			data[k] = config[k];
-		});
+		PRESET_KEYS.forEach(function (k) { data[k] = config[k]; });
 		return data;
 	}
+
+	function onSavePreset() {
+		var name = presetName.trim();
+		if (!name) {
+			setHint('请先输入预设名称。');
+			return;
+		}
+		setPresets(Z.Config.savePreset(name, presetSnapshot()));
+		setPresetName('');
+		dispatch(pushToast({ type: 'success', text: '已保存预设「' + name + '」。' }));
+	}
+
+	function onLoadPreset(name) {
+		var data = Z.Config.loadPresets()[name];
+		if (!data) return;
+		dispatch(importConfig(Object.assign({ Content: config.Content, Title: config.Title }, data)));
+		dispatch(pushToast({ type: 'success', text: '已加载预设「' + name + '」。' }));
+	}
+
+	function onDeletePreset(name) {
+		setPresets(Z.Config.deletePreset(name));
+		dispatch(pushToast({ type: 'success', text: '已删除预设「' + name + '」。' }));
+	}
+
+	function startRename(name) {
+		setRenamingName(name);
+		setRenameValue(name);
+	}
+
+	function cancelRename() {
+		setRenamingName(null);
+		setRenameValue('');
+	}
+
+	function commitRename(name) {
+		var next = renameValue.trim();
+		cancelRename();
+		if (!next || next === name) return;
+		if (Z.Config.loadPresets()[next]) {
+			setHint('已存在同名预设「' + next + '」。');
+			return;
+		}
+		setPresets(Z.Config.renamePreset(name, next));
+		dispatch(pushToast({ type: 'success', text: '已重命名预设「' + name + '」→「' + next + '」。' }));
+	}
+
+	var names = Object.keys(presets);
+
+	return (
+		<Group title="预设">
+			<div className="rp-field">
+				<label htmlFor="presetName">保存当前版式为预设</label>
+				<div className="rp-row">
+					<input
+						id="presetName"
+						className="rp-input"
+						value={presetName}
+						placeholder="如：硬笔 / 软笔"
+						onChange={function (e) { setPresetName(e.target.value); }}
+					/>
+					<button type="button" className="rp-btn" onClick={onSavePreset}>保存</button>
+				</div>
+				{names.length > 0 && (
+					<ul className="rp-presets">
+						{names.map(function (name) {
+							return (
+								<li key={name} className={'rp-presets-item' + (renamingName === name ? ' is-renaming' : '')}>
+									<span className="rp-presets-name">{name}</span>
+									{renamingName === name ? (
+										<span className="rp-presets-rename">
+											<input
+												id={'preset-rename-' + name}
+												className="rp-input"
+												maxLength={30}
+												value={renameValue}
+												onChange={function (e) { setRenameValue(e.target.value); }}
+											/>
+											<button type="button" className="rp-btn" onClick={function () { commitRename(name); }}>确定</button>
+											<button type="button" className="rp-link" onClick={cancelRename}>取消</button>
+										</span>
+									) : (
+										<span className="rp-presets-ops">
+											<button type="button" className="rp-link" onClick={function () { onLoadPreset(name); }}>加载</button>
+											<button type="button" className="rp-link" onClick={function () { startRename(name); }}>改名</button>
+											<button type="button" className="rp-link" onClick={function () { onDeletePreset(name); }}>删除</button>
+										</span>
+									)}
+								</li>
+							);
+						})}
+					</ul>
+				)}
+				{hint && <p className="rp-hint-note">{hint}</p>}
+			</div>
+		</Group>
+	);
+}
+
+/* 资源来源（P2-9）：CDN（file:// 直开）/ 本地 vendor（http 托管，需 npm run vendor）。 */
+function ResourceModeGroup() {
+	const dispatch = useDispatch();
+	const config = useSelector(function (s) { return s.config; });
+
+	useEffect(function () {
+		if (window.Zitie && window.Zitie.Assets) window.Zitie.Assets.renderStatus();
+	}, []);
+
+	function pick(value) {
+		if (value === config.ResourceMode) return;
+		dispatch(setField({ key: 'ResourceMode', value: value }));
+		/* store.subscribe 已同步 Config.ResourceMode；重新加载并刷新状态行 */
+		if (window.Zitie && window.Zitie.Assets) window.Zitie.Assets.apply();
+	}
+
+	return (
+		<Group title="资源来源">
+			<div className="rp-field">
+				<label id="resourceModeLabel">第三方资源来源</label>
+				<div className="rp-seg" role="group" aria-labelledby="resourceModeLabel">
+					<button type="button" className={config.ResourceMode === 'cdn' ? 'is-active' : ''} aria-pressed={config.ResourceMode === 'cdn'} onClick={function () { pick('cdn'); }}>CDN</button>
+					<button type="button" className={config.ResourceMode === 'local' ? 'is-active' : ''} aria-pressed={config.ResourceMode === 'local'} onClick={function () { pick('local'); }}>本地 vendor</button>
+				</div>
+				<div id="assetStatus" className="field-hint" />
+				<p className="rp-hint-note">CDN 走 jsDelivr，file:// 直开可用；本地 vendor 需先 npm run vendor 并由 http 托管，缺失时自动回退 CDN。</p>
+			</div>
+		</Group>
+	);
+}
+
+/* 设置导入导出（S3）：白名单快照（含内容与标题），用于备份 / 换机。 */
+function SettingsIO() {
+	const dispatch = useDispatch();
+	const config = useSelector(function (s) { return s.config; });
+	const fileRef = useRef(null);
 
 	function onExport() {
 		var blob = new Blob([JSON.stringify(Z.Config.snapshot(), null, 2)], { type: 'application/json;charset=utf-8' });
@@ -357,31 +566,6 @@ function SettingsGroup() {
 		reader.readAsText(file, 'utf-8');
 	}
 
-	function onSavePreset() {
-		var name = presetName.trim();
-		if (!name) {
-			setHint('请先输入预设名称。');
-			return;
-		}
-		setPresets(Z.Config.savePreset(name, presetSnapshot()));
-		setPresetName('');
-		dispatch(pushToast({ type: 'success', text: '已保存预设「' + name + '」。' }));
-	}
-
-	function onLoadPreset(name) {
-		var data = Z.Config.loadPresets()[name];
-		if (!data) return;
-		dispatch(importConfig(Object.assign({ Content: config.Content, Title: config.Title }, data)));
-		dispatch(pushToast({ type: 'success', text: '已加载预设「' + name + '」。' }));
-	}
-
-	function onDeletePreset(name) {
-		setPresets(Z.Config.deletePreset(name));
-		dispatch(pushToast({ type: 'success', text: '已删除预设「' + name + '」。' }));
-	}
-
-	var names = Object.keys(presets);
-
 	return (
 		<Group title="设置">
 			<div className="rp-field">
@@ -391,62 +575,80 @@ function SettingsGroup() {
 					<button type="button" className="rp-btn" onClick={function () { if (fileRef.current) fileRef.current.click(); }}>导入 JSON</button>
 				</div>
 				<input ref={fileRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={onImportFile} />
-			</div>
-			<div className="rp-field">
-				<label htmlFor="presetName">保存为预设</label>
-				<div className="rp-row">
-					<input
-						id="presetName"
-						className="rp-input"
-						value={presetName}
-						placeholder="如：硬笔 / 软笔"
-						onChange={function (e) { setPresetName(e.target.value); }}
-					/>
-					<button type="button" className="rp-btn" onClick={onSavePreset}>保存</button>
-				</div>
-				{names.length > 0 && (
-					<ul className="rp-presets">
-						{names.map(function (name) {
-							return (
-								<li key={name} className="rp-presets-item">
-									<span className="rp-presets-name">{name}</span>
-									<button type="button" className="rp-link" onClick={function () { onLoadPreset(name); }}>加载</button>
-									<button type="button" className="rp-link" onClick={function () { onDeletePreset(name); }}>删除</button>
-								</li>
-							);
-						})}
-					</ul>
-				)}
-				{hint && <p className="rp-hint-note">{hint}</p>}
+				<p className="rp-hint-note">导出包含内容与标题的全部设置；导入时未提供的字段保留当前值。</p>
 			</div>
 		</Group>
 	);
 }
 
-/* 输出：PDF / 打印。与顶栏共用 usePdfExport（配置从 Redux store 显式传入 Z.Pdf.export） */
-function OutputActions() {
-	const { busy, exportPdf } = usePdfExport();
-	return (
-		<div className="rp-actions">
-			<button type="button" className="rp-btn rp-btn-primary" disabled={busy} onClick={exportPdf}>
-				{busy ? '正在生成 PDF…' : '导出 PDF'}
-			</button>
-			<button type="button" className="rp-btn" onClick={function () { window.print(); }}>
-				打印
-			</button>
-		</div>
-	);
-}
-
-export function Panel() {
+export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 	const config = useSelector(function (s) { return s.config; });
 	const dispatch = useDispatch();
 	const schema = ConfigSchema;
 	const [page, setPage] = useState('content');
 	const contentRef = useRef(null);
+	/* 窄屏抽屉（P1-4）：≤720px 时面板为覆盖式抽屉，rail 图标条常驻 */
+	const [isNarrow, setIsNarrow] = useState(function () {
+		return !!(window.matchMedia && window.matchMedia('(max-width: 720px)').matches);
+	});
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const triggerRef = useRef(null);
 
-	/* 每行格数上限 = 当前纸张 / 格子大小可容纳的列数（与 pageLayout 联约束一致，T0.5） */
-	const colsMax = Math.max(1, Z.SheetLayout.compute({ cols: 0, content: '', config: config }).cols);
+	/* 空态引导：预览区「查看示例」→ 切到内容页并聚焦输入框 */
+	useEffect(function () {
+		function go() {
+			setPage('content');
+			setTimeout(function () {
+				var ta = document.getElementById('content');
+				if (ta) ta.focus();
+			}, 0);
+		}
+		window.addEventListener('zitie:go-content', go);
+		return function () { window.removeEventListener('zitie:go-content', go); };
+	}, []);
+
+	useEffect(function () {
+		var mq = window.matchMedia ? window.matchMedia('(max-width: 720px)') : null;
+		if (!mq) return undefined;
+		var onChange = function (e) {
+			setIsNarrow(e.matches);
+			if (!e.matches) setDrawerOpen(false);
+		};
+		if (mq.addEventListener) mq.addEventListener('change', onChange);
+		else if (mq.addListener) mq.addListener(onChange);
+		return function () {
+			if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+			else if (mq.removeListener) mq.removeListener(onChange);
+		};
+	}, []);
+
+	/* Esc 关闭抽屉，焦点返还触发按钮（P1-4） */
+	useEffect(function () {
+		if (!drawerOpen || !isNarrow) return undefined;
+		function onKey(e) {
+			if (e.key !== 'Escape') return;
+			closeDrawer();
+		}
+		document.addEventListener('keydown', onKey);
+		return function () { document.removeEventListener('keydown', onKey); };
+	}, [drawerOpen, isNarrow]);
+
+	function closeDrawer() {
+		setDrawerOpen(false);
+		if (triggerRef.current) triggerRef.current.focus();
+	}
+
+	function pickPage(key, trigger) {
+		triggerRef.current = trigger;
+		setPage(key);
+		if (isNarrow) setDrawerOpen(true);
+	}
+
+	/* 每行格数上限 = 当前纸张 / 格子大小可容纳的列数（与 pageLayout 联约束一致，T0.5）。
+	 * 仅依赖纸张 / 边距 / 格子大小，内容变化不重算（P3-13）。 */
+	const colsMax = useMemo(function () {
+		return Math.max(1, Z.SheetLayout.compute({ cols: 0, content: '', config: config }).cols);
+	}, [config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left, config.GridSize]);
 	const colsValue = Math.min(config.Cols, colsMax);
 	/* 实际生效列数（Cols=0 自适应时取上限），供模板缩略图画足一行 */
 	const activeCols = config.Cols === 0 ? colsMax : colsValue;
@@ -462,16 +664,33 @@ export function Panel() {
 			traceCount: config.TraceCount,
 			cols: config.Cols,
 			rowGap: config.RowGap,
-			cellGap: config.CellGap,
 			gridPx: config.GridSize,
 			config: config
 		});
 		return { rows: rows, pages: layout.pages.length };
-	}, [config]);
+	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left]);
 
 	function field(key, value) {
 		dispatch(setField({ key: key, value: value }));
 	}
+
+	/* 内容撤销 / 重做（M2）：Ctrl/Cmd+Z 撤销、Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做。
+	   其他输入框（标题 / 预设名 / 字体名等）不拦截，保留其原生撤销。 */
+	useEffect(function () {
+		function onKeyDown(e) {
+			if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+			var key = String(e.key || '').toLowerCase();
+			if (key !== 'z' && key !== 'y') return;
+			var el = e.target;
+			if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.id !== 'content') return;
+			e.preventDefault();
+			var redo = key === 'y' || (key === 'z' && e.shiftKey);
+			var ok = redo ? redoContent() : undoContent();
+			if (!ok) dispatch(pushToast({ type: 'info', text: redo ? '没有可重做的操作。' : '没有可撤销的操作。' }));
+		}
+		document.addEventListener('keydown', onKeyDown);
+		return function () { document.removeEventListener('keydown', onKeyDown); };
+	}, [dispatch]);
 
 	var pageHead = {
 		content: { title: '字帖内容', sub: '换行分段，空行分页；空格即空临格' },
@@ -481,19 +700,20 @@ export function Panel() {
 		},
 		grid: { title: '字格', sub: ZG_TYPES.length + ' 种样式 · ' + ZG_COLORS.length + ' 种颜色' },
 		text: { title: '文字', sub: '字体 · 颜色 · 辅助' },
-		output: { title: '输出', sub: '打印 · 导出 · 预设' },
-		about: { title: '关于', sub: '墨帖 v' + __ZITIE_VERSION__ }
+		output: { title: '输出', sub: '姓名 / 日期 / 页码 · 导出 / 打印' },
+		more: { title: '更多', sub: '关于 · 设置导入导出' }
 	}[page];
 
-	function railItem(item, isAbout) {
+	function railItem(item) {
 		return (
 			<button
 				type="button"
 				key={item.key}
 				data-page={item.key}
+				title={item.name}
 				className={'rp-rail-item' + (page === item.key ? ' is-current' : '')}
 				aria-current={page === item.key ? 'page' : undefined}
-				onClick={function () { setPage(item.key); }}
+				onClick={function (e) { pickPage(item.key, e.currentTarget); }}
 			>
 				{ICONS[item.key]}
 				<span className="rp-rail-name">{item.name}</span>
@@ -506,10 +726,21 @@ export function Panel() {
 			<nav className="rp-rail" aria-label="功能分类">
 				{RAIL_MAIN.map(function (item) { return railItem(item); })}
 				<div className="rp-rail-spacer" />
-				{railItem({ key: 'about', name: '关于' })}
+				<button
+					type="button"
+					title="关于 · 设置导入导出"
+					className={'rp-rail-item rp-rail-more' + (page === 'more' ? ' is-current' : '')}
+					aria-current={page === 'more' ? 'page' : undefined}
+					onClick={function (e) { pickPage('more', e.currentTarget); }}
+				>
+					{ICONS.more}
+					<span className="rp-rail-name">更多</span>
+				</button>
 			</nav>
-			<aside className="rp-panel">
+			<div className="rp-panel-scrim" onClick={closeDrawer} aria-hidden="true" />
+			<aside className={'rp-panel' + (isNarrow && drawerOpen ? ' is-open' : '')} aria-hidden={isNarrow && !drawerOpen ? 'true' : undefined}>
 				<div className="rp-page-head">
+					<button type="button" className="rp-panel-close" aria-label="关闭面板" onClick={closeDrawer}>×</button>
 					<h2>{pageHead.title}</h2>
 					<p>{pageHead.sub}</p>
 				</div>
@@ -519,15 +750,15 @@ export function Panel() {
 						<div className="rp-field">
 							<label htmlFor="content">内容</label>
 							<textarea
-								id="content"
-								className="rp-textarea"
-								maxLength={schema.Content.max}
-								ref={contentRef}
-								value={config.Content}
-								onChange={function (e) { dispatch(setContent(e.target.value)); }}
-							/>
+							id="content"
+							className="rp-textarea"
+							maxLength={schema.Content.max}
+							ref={contentRef}
+							value={config.Content}
+							placeholder="输入汉字，换行分段，空行分页；空格即空临格"
+							onChange={function (e) { dispatch(setContent(e.target.value)); }}
+						/>
 						</div>
-						<ContentTools textareaRef={contentRef} />
 						<div className="rp-field">
 							<label htmlFor="title">标题（可选）</label>
 							<input
@@ -540,6 +771,7 @@ export function Panel() {
 							/>
 						</div>
 						<p className="rp-page-note">已输入 {contentStats.rows} 行 · 约 {contentStats.pages} 页</p>
+						<ContentTools textareaRef={contentRef} />
 					</div>
 				)}
 
@@ -578,16 +810,30 @@ export function Panel() {
 								<SchemaRange schemaKey="Cols" aria-valuetext={config.Cols === 0 ? '自适应' : colsValue + ' 列'} max={colsMax} display={config.Cols === 0 ? '自适应' : String(colsValue)} />
 							</div>
 							<div className="rp-field">
-								<label htmlFor="rowGap">行距</label>
+								<label htmlFor="rowGap">行距（相对格子高）</label>
 								<SchemaPercentRange schemaKey="RowGap" aria-valuetext={Math.round(config.RowGap * 100) + '%'} />
 							</div>
 							<div className="rp-field">
-								<label htmlFor="cellGap">字距</label>
-								<SchemaPercentRange schemaKey="CellGap" aria-valuetext={Math.round(config.CellGap * 100) + '%'} />
+								<label>垂直对齐</label>
+								<div className="rp-tpl">
+									{VERTICAL_ALIGNS.map(function (a) {
+										return (
+											<button
+												type="button"
+												key={a}
+												className={config.VerticalAlign === a ? 'is-active' : ''}
+												aria-pressed={config.VerticalAlign === a}
+												onClick={function () { field('VerticalAlign', a); }}
+											>
+												{VERTICAL_ALIGN_NAMES[a]}
+											</button>
+										);
+									})}
+								</div>
 							</div>
 						</Group>
-						<PageGroup />
-						<MetaGroup />
+					<PageGroup />
+					<PresetGroup />
 					</div>
 				)}
 
@@ -625,6 +871,9 @@ export function Panel() {
 											<button
 												type="button"
 												key={key}
+												title={ZG_COLOR_NAMES[key] || key}
+												aria-label={ZG_COLOR_NAMES[key] || key}
+												aria-pressed={config.ZgColor === key}
 												className={config.ZgColor === key ? 'is-active' : ''}
 												style={{ background: (ZG_COLOR_VALUES[key] || {}).border }}
 												onClick={function () { field('ZgColor', key); }}
@@ -633,13 +882,13 @@ export function Panel() {
 									})}
 								</div>
 							</div>
-							<div className="rp-field">
-								<label htmlFor="gridSize">格子大小</label>
-								<SchemaRange schemaKey="GridSize" aria-valuetext={config.GridSize + ' 像素'} display={config.GridSize + 'px'} />
-							</div>
-						</Group>
-					</div>
-				)}
+						<div className="rp-field">
+							<label htmlFor="gridSize">格子大小</label>
+							<SchemaRange schemaKey="GridSize" aria-valuetext={config.GridSize + ' 像素'} display={config.GridSize + 'px'} />
+						</div>
+					</Group>
+				</div>
+			)}
 
 				{page === 'text' && (
 					<div className="rp-panel-page">
@@ -665,14 +914,24 @@ export function Panel() {
 								<label htmlFor="inkAlpha">深浅</label>
 								<SchemaPercentRange schemaKey="InkAlpha" aria-valuetext={Math.round(config.InkAlpha * 100) + '%'} />
 							</div>
+							<div className="rp-field">
+								<label htmlFor="charOffsetX">字体水平位置</label>
+								<SchemaPercentRange schemaKey="CharOffsetX" aria-valuetext={Math.round(config.CharOffsetX * 100) + '%'} />
+							</div>
+							<div className="rp-field">
+								<label htmlFor="charOffsetY">字体垂直位置</label>
+								<SchemaPercentRange schemaKey="CharOffsetY" aria-valuetext={Math.round(config.CharOffsetY * 100) + '%'} />
+							</div>
 							<div className="rp-field rp-check">
 								<input
 									id="showPinyin"
 									type="checkbox"
 									checked={config.ShowPinyin}
+									disabled={config.ZgType !== '5'}
+									title={config.ZgType !== '5' ? '拼音显示仅「拼音格」支持' : undefined}
 									onChange={function (e) { field('ShowPinyin', e.target.checked); }}
 								/>
-								<label htmlFor="showPinyin">显示拼音</label>
+								<label htmlFor="showPinyin">显示拼音{config.ZgType !== '5' ? '（仅拼音格）' : ''}</label>
 							</div>
 							<div className="rp-field rp-check">
 								<input
@@ -681,7 +940,7 @@ export function Panel() {
 									checked={config.StrokeAnim}
 									onChange={function (e) { field('StrokeAnim', e.target.checked); }}
 								/>
-								<label htmlFor="strokeAnim">笔顺动画（点击字格）</label>
+								<label htmlFor="strokeAnim">笔顺动画（放大预览内点击「播放笔顺」）</label>
 							</div>
 						</Group>
 						<FontManager />
@@ -690,17 +949,26 @@ export function Panel() {
 
 				{page === 'output' && (
 					<div className="rp-panel-page">
-						<Group title="输出">
-							<OutputActions />
+						<MetaGroup />
+						{/* 输出动作（P2-7）：导出 / 打印从顶栏移入「输出」页，名实相符 */}
+						<Group title="输出动作">
+							<div className="rp-actions">
+								<button type="button" className="rp-btn" disabled={pdfBusy} onClick={onExportPdf}>
+									{pdfBusy ? <><span className="rp-spinner" aria-hidden="true" />正在生成 PDF…</> : '导出 PDF'}
+								</button>
+								<button type="button" className="rp-btn rp-btn-primary" disabled={pdfBusy} onClick={onPrint || function () { window.print(); }}>打印</button>
+							</div>
 						</Group>
-						<SettingsGroup />
-					</div>
+						</div>
 				)}
 
-				{page === 'about' && (
+				{page === 'more' && (
 					<div className="rp-panel-page">
+						{/* 设置导入导出提到「更多」首屏（P2-7） */}
+						<SettingsIO />
 						<p className="rp-about-text">墨帖是一套纯前端字帖工具：内容、版式、字格与字体均在本地处理，可导出 PDF 或直接打印。</p>
 						<p className="rp-version">墨帖 v{__ZITIE_VERSION__}</p>
+						<ResourceModeGroup />
 					</div>
 				)}
 			</aside>

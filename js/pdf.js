@@ -10,7 +10,10 @@
 	'use strict';
 
 	var PAGE = Z.ContentModel.defaultPage;      /* A4（mm） */
-	var SCALE = 2;                              /* 画布分辨率：CSS 96dpi 的 2 倍 */
+	/* 画布分辨率：CSS 96dpi 的 1.5 倍。P3-15 实测（20 页 A4）：
+ * 2×PNG 5.31MB / 13.2s，1.5×PNG 3.86MB / 8.0s，二者缩放后笔画清晰度目视无差；
+ * JPEG 0.92 反而 8.72MB（白底细线高频噪声），故保持 PNG + 1.5×。 */
+var SCALE = 1.5;
 	var PX_PER_MM = 96 / 25.4 * SCALE;
 	/* 专业版构建时注入 npm 包构造器（web/src/main.jsx 编译绑定 jspdf） */
 	var injectedCtor = null;
@@ -48,12 +51,10 @@
 		return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 	}
 
-	function drawPage(page, layout, gridImg, cfg, pageIndex, pageCount) {
+		function drawPage(page, layout, gridImg, cfg, pageIndex, pageCount) {
 		var lines = page.lines;
 		var gridMm = layout.gridMm;
-		var pitchMm = layout.pitchMm;
 		var gridDevice = mmPx(gridMm);
-		var gapDevice = mmPx(layout.gapMm);
 
 		var pageSize = layout.page || PAGE;
 		var canvas = document.createElement('canvas');
@@ -66,8 +67,8 @@
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 
-		/* 行起点：锁定列数时整行居中 */
-		var rowWidth = lines.length ? lines[0].length * gridDevice + Math.max(0, lines[0].length - 1) * gapDevice : 0;
+		/* 行起点：锁定列数时整行居中（字距已移除，行宽 = 格数 × 格宽） */
+		var rowWidth = lines.length ? lines[0].length * gridDevice : 0;
 		var usableDevice = mmPx(layout.usableW);
 		var startX = mmPx(layout.margin.left);
 		if (layout.fixedCols && rowWidth > 0 && rowWidth < usableDevice) {
@@ -81,40 +82,51 @@
 			ctx.fillStyle = 'rgba(35, 38, 43, .92)';
 			ctx.fillText(page.title, mmPx(pageSize.width) / 2, mmPx(layout.margin.top) + mmPx(gridMm * 0.42));
 		}
-		var startY = mmPx(layout.margin.top) + titleH;
 		var rgb = inkRGB(cfg);
 		var modelColor = 'rgba(' + rgb + ', ' + cfg.InkAlpha + ')';
 		var traceColor = 'rgba(' + rgb + ', ' + (cfg.InkAlpha * 0.5) + ')';
 
+		/* 行距 = 配置格倍数 × 格宽（精确值，与屏幕 / 打印一致，见 content.js）：
+		 * 行区高 = 可用高 − 标题占位；行盒高 = 字格高（拼音格 1.4×格，其余 1.0×格）；
+		 * 行块高 = 行数 × 行盒 + (行数 − 1) × 行距；行区垂直对齐按配置
+		 * （center 居中 / top 靠顶 / bottom 靠底），行距不变。
+		 * 字帖不显示拼音：拼音格仅在格内上区画四线三格占位线。 */
+		var rowBoxMm = layout.rowBoxMm;
+		var gapMm = layout.gapMm;
+		var rowCount = lines.length;
+		var areaMm = layout.usableH - (page.title ? gridMm * 0.9 : 0);
+		var blockMm = rowCount * rowBoxMm + (rowCount > 1 ? (rowCount - 1) * gapMm : 0);
+		var align = cfg.VerticalAlign === 'top' || cfg.VerticalAlign === 'bottom' ? cfg.VerticalAlign : 'center';
+		var blockOffsetMm = align === 'top' ? 0 : align === 'bottom' ? Math.max(0, areaMm - blockMm) : (areaMm - blockMm) / 2;
+		var startY = mmPx(layout.margin.top) + titleH + mmPx(blockOffsetMm);
+		var pitch = rowBoxMm + gapMm;
+		var isPyGrid = cfg.ZgType === '5';
+		var gridH = gridDevice * (isPyGrid ? 1.4 : 1);
+		/* 字体在格内的水平 / 垂直偏移（格倍数），与屏幕 / 打印一致 */
+		var dx = Number(cfg.CharOffsetX) || 0;
+		var dy = Number(cfg.CharOffsetY) || 0;
 		lines.forEach(function (line, r) {
-			var y = startY + r * mmPx(pitchMm);
+			var y = startY + r * mmPx(pitch);
 			line.forEach(function (item, c) {
 				var char = item.char;
 				var role = item.role;
-				var x = startX + c * (gridDevice + gapDevice);
+				var x = startX + c * gridDevice;
 
-				/* 拼音 */
-				if (cfg.ShowPinyin) {
-					ctx.font = Math.round(mmPx(gridMm * 0.15)) + 'px ' + pinyinFontStack();
-					ctx.fillStyle = 'rgba(35, 38, 43, .62)';
-					ctx.fillText(Z.getPinyin(char), x + gridDevice / 2, y + gridDevice * 0.125);
-				}
+				/* 字格：空临格与有字格同一套字格样式（仅无字）；拼音格上区四线三格占位 */
+				ctx.drawImage(gridImg, x, y, gridDevice, gridH);
 
-				/* 字格 */
-				ctx.drawImage(gridImg, x, y + gridDevice * 0.25, gridDevice, gridDevice);
-
-				/* 汉字（与 CSS 的 line-height .725 / 1.0625 对齐）；空临格不画字 */
+				/* 汉字（与 CSS 的 line-height / font-size 对齐；拼音格居下区 1.0×格）；空临格不画字 */
 				if (role !== 'blank') {
 					ctx.font = Math.round(mmPx(gridMm * 0.725)) + 'px ' + charFontStack();
 					ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
-					ctx.fillText(char, x + gridDevice / 2, y + gridDevice * 0.25 + gridDevice * 0.53125);
+					ctx.fillText(char, x + gridDevice / 2 + gridDevice * dx, y + gridDevice * (isPyGrid ? 0.4 + 0.53125 : 0.53125) + gridDevice * dy);
 				}
 
 				/* 标点：不占格，字格右下角（T0.8）；空临格也照画 */
 				if (item.mark) {
 					ctx.font = Math.round(mmPx(gridMm * 0.3)) + 'px ' + charFontStack();
 					ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
-					ctx.fillText(item.mark, x + gridDevice * 0.82, y + gridDevice * 0.25 + gridDevice * 0.82);
+					ctx.fillText(item.mark, x + gridDevice * 0.82 + gridDevice * dx, y + gridDevice * (isPyGrid ? 0.4 + 0.82 : 0.82) + gridDevice * dy);
 				}
 			});
 		});
@@ -161,8 +173,8 @@
 				/* 自定义字体可能仍在加载：等字体就绪再绘制，避免 canvas 回落默认字体 */
 				if (document.fonts && document.fonts.ready) return Promise.resolve(document.fonts.ready);
 			}).then(function () {
-				var uri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(Z.buildZgSvg(cfg.ZgType, cfg.ZgColor));
-				return loadImage(uri).then(function (gridImg) {
+				var gridUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(Z.buildZgSvg(cfg.ZgType, cfg.ZgColor));
+				return loadImage(gridUri).then(function (gridImg) {
 					return { JsPdf: JsPdf, layout: layout, canvases: layout.pages.map(function (page, i) { return drawPage(page, layout, gridImg, cfg, i, layout.pages.length); }) };
 				});
 			}).then(function (r) {

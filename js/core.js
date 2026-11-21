@@ -33,6 +33,7 @@ export var INK_RGB = Z.INK_RGB;
 export var ZG_TYPES = Z.ZG_TYPES;
 export var ZG_COLORS = Z.ZG_COLORS;
 export var ZG_COLOR_VALUES = Z.ZG_COLOR_VALUES;
+export var VERTICAL_ALIGNS = Z.VERTICAL_ALIGNS;
 
 /* 归一化 */
 export var normalize = Z.normalize;
@@ -49,7 +50,6 @@ export var SheetLayout = Z.SheetLayout;
 /* 字格背景 */
 export var buildZgSvg = Z.buildZgSvg;
 export var getZgBackground = Z.getZgBackground;
-
 /* 自定义字体 */
 export var Font = Z.Font;
 

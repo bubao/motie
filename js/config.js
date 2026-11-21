@@ -34,6 +34,8 @@
 	Z.MAX_GAP = 1;
 	Z.MIN_INK_ALPHA = 0.15;
 	Z.MAX_INK_ALPHA = 1;
+	Z.MIN_CHAR_OFFSET = -0.25; /* 字体在格内的水平 / 垂直偏移区间（格倍数） */
+	Z.MAX_CHAR_OFFSET = 0.25;
 
 	/* 构建时可注入 window.ZITIE_BOOT.ResourceMode 指定默认资源来源（见 tools/build.js） */
 	var boot = window.ZITIE_BOOT || {};
@@ -44,14 +46,16 @@
 		Template: 'normal',   /* 排版模板：normal / trace / trace3 / lead / blank */
 		TraceCount: 3,        /* 一字三描红：每行前 N 格为深色范字 */
 		Cols: 0,              /* 每行格数：0 = 按纸张自适应 */
-		RowGap: 0.12,         /* 行距（格倍数） */
-		CellGap: 0.05,        /* 字距（格倍数） */
+		RowGap: 0.12,         /* 行距（相对行盒高倍数：拼音格随 1.4×格等比放大） */
+		VerticalAlign: 'center', /* 行区垂直对齐：center 居中 / top 靠顶 / bottom 靠底（行距不变） */
 		InkColor: 'cinnabar', /* 文字颜色：cinnabar / ink / ochre */
 		InkAlpha: 0.62,       /* 文字深浅 0.15–1 */
+		CharOffsetX: 0,       /* 字体在格内的水平偏移（格倍数，-0.25–0.25） */
+		CharOffsetY: 0,       /* 字体在格内的垂直偏移（格倍数） */
 		ZgType: '3',     /* 字格样式：1 田 / 2 米 / 3 米回 / 4 回 / 5 拼音 / 6 作文 / 7 数字（5–7 仅完整版） */
 		ZgColor: '1',    /* 字格颜色：1 绿 / 2 灰 / 3 红 */
 		GridSize: 80,    /* 格子边长（px） */
-		ShowPinyin: true,  /* 字格上方显示拼音 */
+		ShowPinyin: true,  /* 预览在拼音格内上区显示拼音（仅 ZgType=5；字帖不显示） */
 		StrokeAnim: true,  /* 点击字格播放笔顺动画 */
 		Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
 		Margin: { top: 5, right: 16, bottom: 5, left: 16 }, /* 页边距（mm），与 @page / sheet-layout 一致 */
@@ -92,6 +96,9 @@
 
 	Z.ZG_TYPES = ['1', '2', '3', '4', '5', '6', '7'];
 	Z.ZG_COLORS = ['1', '2', '3'];
+
+	/* 行区垂直对齐（行距不变，只改空白分布） */
+	Z.VERTICAL_ALIGNS = ['center', 'top', 'bottom'];
 
 	/* 字格配色：虚线颜色 + 边框颜色 */
 	Z.ZG_COLOR_VALUES = {
@@ -145,9 +152,11 @@
 		TraceCount: { type: 'int', min: Z.MIN_TRACE_COUNT, max: Z.MAX_TRACE_COUNT, group: 'layout' },
 		Cols:       { type: 'int', min: 0, max: Z.MAX_COLS, group: 'layout', zeroLabel: '自适应' },
 		RowGap:     { type: 'percent', min: Z.MIN_GAP, max: Z.MAX_GAP, group: 'layout' },
-		CellGap:    { type: 'percent', min: Z.MIN_GAP, max: Z.MAX_GAP, group: 'layout' },
+		VerticalAlign: { type: 'enum', values: Z.VERTICAL_ALIGNS, group: 'layout' },
 		InkColor:   { type: 'enum', values: Z.INK_COLOR_KEYS, group: 'text' },
 		InkAlpha:   { type: 'percent', min: Z.MIN_INK_ALPHA, max: Z.MAX_INK_ALPHA, group: 'text' },
+		CharOffsetX: { type: 'percent', min: Z.MIN_CHAR_OFFSET, max: Z.MAX_CHAR_OFFSET, group: 'text' },
+		CharOffsetY: { type: 'percent', min: Z.MIN_CHAR_OFFSET, max: Z.MAX_CHAR_OFFSET, group: 'text' },
 		ZgType:     { type: 'enum', values: Z.ZG_TYPES, group: 'grid' },
 		ZgColor:    { type: 'enum', values: Z.ZG_COLORS, group: 'grid' },
 		GridSize:   { type: 'int', min: Z.MIN_GRID_SIZE, max: Z.MAX_GRID_SIZE, step: 2, group: 'grid' },
@@ -234,9 +243,11 @@
 		TraceCount: Z.DEFAULTS.TraceCount,
 		Cols: Z.DEFAULTS.Cols,
 		RowGap: Z.DEFAULTS.RowGap,
-		CellGap: Z.DEFAULTS.CellGap,
+		VerticalAlign: Z.DEFAULTS.VerticalAlign,
 		InkColor: Z.DEFAULTS.InkColor,
 		InkAlpha: Z.DEFAULTS.InkAlpha,
+		CharOffsetX: Z.DEFAULTS.CharOffsetX,
+		CharOffsetY: Z.DEFAULTS.CharOffsetY,
 		ZgType: Z.DEFAULTS.ZgType,
 		ZgColor: Z.DEFAULTS.ZgColor,
 		GridSize: Z.DEFAULTS.GridSize,
@@ -314,6 +325,16 @@
 			delete all[name];
 			try { window.localStorage.setItem(Z.PRESETS_KEY, JSON.stringify(all)); } catch (e) { /* 忽略 */ }
 			return all;
+		},
+		/* 重命名：保持原键顺序；新名为空 / 重名时原样返回（不覆盖） */
+		renamePreset: function (oldName, newName) {
+			var all = this.loadPresets();
+			var next = String(newName == null ? '' : newName).trim();
+			if (!next || next === oldName || !all[oldName] || all[next]) return all;
+			var out = {};
+			Object.keys(all).forEach(function (k) { out[k === oldName ? next : k] = all[k]; });
+			try { window.localStorage.setItem(Z.PRESETS_KEY, JSON.stringify(out)); } catch (e) { /* 忽略 */ }
+			return out;
 		}
 	};
 })(window.Zitie = window.Zitie || {});

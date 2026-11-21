@@ -8,6 +8,9 @@ import { setField } from './store.js';
  * 避免 Panel 手写区间与 schema 漂移（D18 / T1.8）。
  */
 
+/* 控件 id：首字母小写，与 Panel 的 htmlFor（traceCount / rowGap / gridSize / inkAlpha）一致 */
+function fieldId(schemaKey) { return schemaKey.charAt(0).toLowerCase() + schemaKey.slice(1); }
+
 /* 整数滑杆。max 可显式覆盖（如「每行格数」按纸宽动态上限）。
  * aria-valuetext 由 Panel 提供（读屏播报具体值，而非裸数字）。 */
 export function SchemaRange({ schemaKey, display, max, ['aria-valuetext']: ariaValueText }) {
@@ -20,7 +23,7 @@ export function SchemaRange({ schemaKey, display, max, ['aria-valuetext']: ariaV
 		<div className="rp-row">
 			<input
 				className="rp-range"
-				id={schemaKey.toLowerCase()}
+				id={fieldId(schemaKey)}
 				type="range"
 				min={spec.min}
 				max={upper}
@@ -44,7 +47,7 @@ export function SchemaPercentRange({ schemaKey, ['aria-valuetext']: ariaValueTex
 		<div className="rp-row">
 			<input
 				className="rp-range"
-				id={schemaKey.toLowerCase()}
+				id={fieldId(schemaKey)}
 				type="range"
 				min={Math.round(spec.min * 100)}
 				max={Math.round(spec.max * 100)}

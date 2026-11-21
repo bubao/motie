@@ -125,10 +125,10 @@
 
 		loadPinyin: function () {
 			var target = urlOf('pinyin');
-			return import(target).catch(function () {
+			return import(/* @vite-ignore */ target).catch(function () {
 				if (target === CDN_URLS.pinyin) return null;
 				markFailed('pinyin');
-				return import(CDN_URLS.pinyin).catch(function () {
+				return import(/* @vite-ignore */ CDN_URLS.pinyin).catch(function () {
 					return null;
 				});
 			});

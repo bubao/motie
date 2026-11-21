@@ -10,7 +10,7 @@ var path = require('path');
 var assert = require('assert');
 
 var ROOT = path.resolve(__dirname, '..');
-var CORE = ['js/config.js', 'js/content.js', 'js/sheet-layout.js'];
+var CORE = ['js/config.js', 'js/content.js', 'js/zg-bg.js', 'js/sheet-layout.js'];
 
 function makeStorage(initial) {
 	var map = {};
@@ -55,6 +55,11 @@ test('normalizeField：枚举非法值回退默认', function () {
 	assert.strictEqual(Z.normalizeField('Template', 'nope'), 'normal');
 	assert.strictEqual(Z.normalizeField('InkColor', 'red'), 'cinnabar');
 	assert.strictEqual(Z.normalizeField('ZgType', '9'), Z.DEFAULTS.ZgType);
+	/* 行区垂直对齐：默认居中，非法值回退居中 */
+	assert.strictEqual(Z.DEFAULTS.VerticalAlign, 'center');
+	assert.strictEqual(Z.normalizeField('VerticalAlign', 'top'), 'top');
+	assert.strictEqual(Z.normalizeField('VerticalAlign', 'bottom'), 'bottom');
+	assert.strictEqual(Z.normalizeField('VerticalAlign', 'middle'), 'center');
 });
 
 test('normalizeField：int / percent 区间夹取', function () {
@@ -65,6 +70,11 @@ test('normalizeField：int / percent 区间夹取', function () {
 	assert.strictEqual(Z.normalizeField('RowGap', 2), 1);
 	assert.strictEqual(Z.normalizeField('RowGap', 0.3), 0.3);
 	assert.strictEqual(Z.normalizeField('InkAlpha', 0), Z.MIN_INK_ALPHA);
+	/* 字体位置：允许负偏移，区间夹取后保留两位小数 */
+	assert.strictEqual(Z.normalizeField('CharOffsetX', 1), Z.MAX_CHAR_OFFSET);
+	assert.strictEqual(Z.normalizeField('CharOffsetX', -1), Z.MIN_CHAR_OFFSET);
+	assert.strictEqual(Z.normalizeField('CharOffsetY', 0.2), 0.2);
+	assert.strictEqual(Z.normalizeField('CharOffsetY', 'x'), 0);
 });
 
 test('normalizeField：text 截断与 bool 类型守卫', function () {
@@ -247,15 +257,21 @@ test('paginate：行内元素携带 char 与 mark', function () {
 
 /* ---------- 版式计算 ---------- */
 
-test('pageLayout：A4 / 80px 基准与锁定列数', function () {
-	var Z = loadCore();
-	var base = Z.ContentModel.pageLayout(80, null, null, 5, 0.12);
-	assert.strictEqual(base.gridMm, 80 * 25.4 / 96);
-	assert.strictEqual(base.cols, 5);
-	assert.ok(base.rows >= 8, 'rows=' + base.rows);
-	var auto = Z.ContentModel.pageLayout(80, null, null, 0, 0.12);
+	test('pageLayout：A4 / 80px 基准与锁定列数', function () {
+		var Z = loadCore();
+		var base = Z.ContentModel.pageLayout(80, null, null, 5, 0.12);
+		assert.strictEqual(base.cols, 5);
+	assert.ok(Math.abs(base.gridMm - base.usableW / 5) < 1e-6, '格宽应均分可用宽');
+	assert.ok(Math.abs(base.gapMm - base.gridMm * 0.12) < 1e-6, '行距应为配置倍率 × 行盒高（非拼音格 1.0×格）');
+	assert.ok(Math.abs(base.rowBoxMm - base.gridMm * 1) < 1e-6, '非拼音格行盒应为 1.0×格');
+	assert.ok(Math.abs(base.pitchMm - base.rowBoxMm - base.gapMm) < 1e-9, '行距周期 = 行盒 + 行距');
+	assert.strictEqual(base.rows, Math.max(1, Math.floor((base.usableH + base.gapMm) / base.pitchMm)), '行数按精确行距折算');
+	assert.ok(base.rows * base.rowBoxMm + (base.rows - 1) * base.gapMm <= base.usableH + 1e-9, '行块不超出可用高');
+	assert.ok((base.rows + 1) * base.rowBoxMm + base.rows * base.gapMm > base.usableH - 1e-9, '行数应取可容纳的最大值');
+		var auto = Z.ContentModel.pageLayout(80, null, null, 0, 0.12);
 	assert.strictEqual(auto.cols, 8);
 	assert.strictEqual(auto.maxCols, 8);
+	assert.ok(Math.abs(auto.gridMm - auto.usableW / 8) < 1e-6, '自适应格宽应均分');
 });
 
 test('pageLayout：锁定列数不超过纸宽可容纳列数（联约束）', function () {
@@ -267,16 +283,21 @@ test('pageLayout：锁定列数不超过纸宽可容纳列数（联约束）', f
 	assert.strictEqual(Z.ContentModel.pageLayout(120, null, null, 20, 0.12).cols, 5);
 });
 
-test('pageLayout：列数上限计入字距', function () {
+test('pageLayout：格子均分铺满可用宽（无右侧留白）', function () {
 	var Z = loadCore();
-	var tight = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, 0);
-	var loose = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, 0.5);
-	assert.ok(loose.maxCols < tight.maxCols, tight.maxCols + ' vs ' + loose.maxCols);
-	[0, 0.05, 0.5, 1].forEach(function (gap) {
-		var l = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, gap);
-		var width = l.cols * l.gridMm + (l.cols - 1) * l.gapMm;
-		assert.ok(width <= l.usableW + 1e-6, 'gap=' + gap + ' width=' + width + ' usable=' + l.usableW);
-	});
+	var l = Z.ContentModel.pageLayout(80, null, null, 0, 0.12);
+	assert.ok(Math.abs(l.cols * l.gridMm - l.usableW) < 1e-6, '列宽总和应等于可用宽');
+	assert.strictEqual(Z.ContentModel.pageLayout(80, null, null, 14, 0.12).cols, l.maxCols);
+});
+
+test('estimatePages：跟随纸张 / 边距（P3-17）', function () {
+	var Z = loadCore();
+	var text = '永'.repeat(200);
+	var a4 = Z.ContentModel.estimatePages(text, 80, 0, 0.12);
+	var big = Z.ContentModel.estimatePages(text, 80, 0, 0.12, { width: 420, height: 594 }, { top: 10, right: 10, bottom: 10, left: 10 });
+	assert.ok(big < a4, '更大纸张应减少估算页数');
+	/* 缺省 page / margin 时保持 A4 默认纸口径 */
+	assert.strictEqual(a4, Z.ContentModel.estimatePages(text, 80, 0, 0.12, null, null));
 });
 
 test('ConfigSchema：Page/Margin/fontURL/ResourceMode 归一化', function () {
@@ -342,6 +363,25 @@ test('pageLayout：行距越大行数越少', function () {
 	var tight = Z.ContentModel.pageLayout(80, null, null, 0, 0);
 	var loose = Z.ContentModel.pageLayout(80, null, null, 0, 1);
 	assert.ok(loose.rows < tight.rows, tight.rows + ' vs ' + loose.rows);
+});
+
+test('pageLayout：行距连续精确（无死区、行数单调不增）', function () {
+	var Z = loadCore();
+	/* 旧实现把行距均分到整页高度，4%~16% 区间实际行距几乎不变（死区）。
+	 * 现在行距 = 配置格倍数 × 格宽，任意两值之差应精确等于格宽差。 */
+	var a = Z.ContentModel.pageLayout(80, null, null, 0, 0.04);
+	var b = Z.ContentModel.pageLayout(80, null, null, 0, 0.16);
+	assert.ok(Math.abs(a.gapMm / a.gridMm - 0.04) < 1e-9, '行距应精确等于配置倍率 × 行盒高');
+	assert.ok(Math.abs(b.gapMm / b.gridMm - 0.16) < 1e-9, '行距应精确等于配置倍率 × 行盒高');
+	assert.strictEqual(a.gridMm, b.gridMm);
+	assert.ok(Math.abs((b.gapMm - a.gapMm) - b.gridMm * 0.12) < 1e-9, '行距差应精确等于行盒高 × 配置差');
+	/* 同格宽下行数随行距单调不增 */
+	var seq = [0, 0.04, 0.08, 0.12, 0.2, 0.4, 0.8, 1.6].map(function (g) {
+		return Z.ContentModel.pageLayout(80, null, null, 0, g).rows;
+	});
+	for (var i = 1; i < seq.length; i++) {
+		assert.ok(seq[i] <= seq[i - 1], '行数应随行距单调不增：' + seq.join(','));
+	}
 });
 
 test('pageLayout：A5 可用宽 / 高更小，列数与行数上限随之收缩', function () {
@@ -424,8 +464,13 @@ test('SheetLayout.compute：分页 / 标题占位 / 角色同源', function () {
 	var layout = Z.SheetLayout.compute({ content: '永'.repeat(96), title: '练习', cols: 8 });
 	assert.strictEqual(layout.cols, 8);
 	assert.strictEqual(layout.rowsFirst, layout.rows - 1);
+	/* 有标题时第一页只少一行；行距为精确值，各页行距周期一致（不再按页重算，P3-18） */
+	assert.strictEqual(layout.pitchFirstMm, layout.pitchMm);
+	assert.ok(Math.abs(layout.gapMm - layout.gridMm * 0.12) < 1e-9, '行距应为配置倍率 × 行盒高（非拼音格 1.0×格）');
+	assert.ok(Math.abs(layout.rowBoxMm - layout.gridMm * 1) < 1e-9, '非拼音格行盒应为 1.0×格');
 	assert.strictEqual(layout.pages.length, 2);
-	assert.deepStrictEqual(layout.pages.map(function (p) { return p.lines.length; }), [8, 4]);
+	/* 第 1 页 rowsFirst=10 行（标题占 1 行）；第 2 页 2 行内容补满到 rows=11 行（行盒 1.0×格） */
+	assert.deepStrictEqual(layout.pages.map(function (p) { return p.lines.length; }), [10, 11]);
 	assert.strictEqual(layout.pages[0].title, '练习');
 	assert.strictEqual(layout.pages[1].title, '');
 	assert.strictEqual(layout.pages[0].lines[0].length, 8);
@@ -452,6 +497,73 @@ test('SheetLayout.compute：空格占位与行尾补满为空临格', function (
 	var layout = Z.SheetLayout.compute({ content: '天 地', cols: 4, gridPx: 80 });
 	assert.deepStrictEqual(layout.pages[0].lines[0].map(function (c) { return c.char; }), ['天', '', '地', '']);
 	assert.deepStrictEqual(layout.pages[0].lines[0].map(function (c) { return c.role; }), ['model', 'blank', 'model', 'blank']);
+});
+
+/* ---------- 字格背景（zg-bg） ---------- */
+
+test('buildZgSvg：拼音格（type5）1×1.4——上区四线三格 + 下区正方形田字格（预览 / 字帖一致）', function () {
+		var Z = loadCore();
+		var svg = Z.buildZgSvg('5', '1');
+		assert.ok(svg.indexOf('width="80" height="112"') >= 0, '字格应为 1×1.4');
+		var paths = svg.match(/<path[^>]*>/g) || [];
+		function lineAt(y) {
+			return paths.filter(function (p) { return p.indexOf('M1 ' + y + ' L79 ' + y) >= 0; })[0] || '';
+		}
+		/* 四线：顶线由外框顶边（y=0）充当；中间两虚线等距（间距 32/3）；末线实线与田字格顶边共用（y=32） */
+		['10.67', '21.33'].forEach(function (y) {
+			assert.ok(lineAt(y) !== '', '上区应有虚线 y=' + y);
+			assert.ok(lineAt(y).indexOf('stroke-dasharray') >= 0, '中间两线应为虚线 y=' + y);
+		});
+		assert.ok(lineAt('32') !== '', '上区应有末线实线 y=32');
+		assert.ok(lineAt('32').indexOf('stroke-dasharray') === -1, '末线应为实线 y=32');
+		/* 下区田字格 32..112：竖线 + 中横；底边 / 左右边由外框充当 */
+		assert.ok(svg.indexOf('M40 32 L40 112') >= 0, '下区应有竖线（田字格 32..112）');
+		assert.ok(svg.indexOf('M0 72 L80 72') >= 0, '下区应有横线');
+		assert.strictEqual(paths.length, 6, '四线虚/实 3 + 田字格竖/横 2 + 外框 1');
+		/* 顶 / 底不再各画一条线与外框重叠（消除“多一条线”） */
+		assert.ok(svg.indexOf('M1 4 ') === -1 && svg.indexOf('M1 28 ') === -1, '不应再画 y=4 / y=28 四线');
+		assert.ok(svg.indexOf('M0 108 ') === -1, '不应再画 y=108 田字格底边');
+		/* 拼音格外框用 1px 细线，与内部线统一 */
+		assert.ok(/stroke-width="1" stroke="/.test(svg), '拼音格外框应为 1px');
+	});
+
+test('buildZgSvg：作文格（type6）纯方格无内线，数字格（type7）下 1/3 基线横线', function () {
+	var Z = loadCore();
+	/* 作文格 = 作文纸：只有外框，一格一字 */
+	var zw = Z.buildZgSvg('6', '1');
+	assert.strictEqual((zw.match(/<path[^>]*>/g) || []).length, 1, '作文格应只有外框（纯方格，无内部线）');
+	/* 数字格 = 数学本：一条横虚线作基线（下 1/3，字占上 2/3） */
+	var sz = Z.buildZgSvg('7', '1');
+	assert.ok(sz.indexOf('M1 53 L79 53') >= 0, '数字格应为下 1/3 基线横线 y=53');
+	assert.strictEqual((sz.match(/<path[^>]*>/g) || []).length, 2, '数字格 = 基线横线 + 外框');
+});
+
+test('pageLayout：拼音格行盒 1.4×格（其余 1.0×格），行数相应减少', function () {
+	var Z = loadCore();
+	var normal = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '1');
+	var py = Z.ContentModel.pageLayout(80, null, null, 0, 0.12, '5');
+	assert.ok(Math.abs(normal.rowBoxMm - normal.gridMm) < 1e-9, '非拼音格行盒 1.0×格');
+	assert.ok(Math.abs(py.rowBoxMm - py.gridMm * 1.4) < 1e-9, '拼音格行盒 1.4×格');
+	assert.ok(Math.abs(normal.gapMm - normal.gridMm * 0.12) < 1e-9, '非拼音格行距 = 行盒高 × 配置倍率');
+	assert.ok(Math.abs(py.gapMm - py.gridMm * 1.4 * 0.12) < 1e-9, '拼音格行距随行盒高 1.4×格等比放大');
+	assert.ok(py.rows < normal.rows, '拼音格行数应更少：' + py.rows + ' vs ' + normal.rows);
+});
+
+test('SheetLayout.compute：每页铺满空临格行（无字也画格）', function () {
+	var Z = loadCore();
+	var layout = Z.SheetLayout.compute({ content: '永', cols: 0, gridPx: 80 });
+	assert.strictEqual(layout.pitchFirstMm, layout.pitchMm); /* 无标题时与整页行距一致 */
+	assert.strictEqual(layout.cols, 8);
+	assert.strictEqual(layout.rows, 11);
+	assert.strictEqual(layout.pages.length, 1);
+	assert.strictEqual(layout.pages[0].lines.length, 11);
+	assert.deepStrictEqual(
+		layout.pages[0].lines[0].map(function (c) { return c.char; }),
+		['永'].concat(Array(7).fill(''))
+	);
+	assert.ok(layout.pages[0].lines.slice(1).every(function (line) {
+		return line.length === 8 && line.every(function (c) { return c.char === '' && c.role === 'blank'; });
+	}), '补满行应为 8 个空临格');
 });
 
 console.log('');

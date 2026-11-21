@@ -203,3 +203,4 @@ lite
 vendor
 dist
 dist-react
+.tmp-*

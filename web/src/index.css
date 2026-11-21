@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* 本项目用 html[data-theme] 切换暗色（见 web/src/App.jsx），
+   而非 shadcn 默认的 .dark class，这里把 dark 变体指向同一来源 */
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+/* 设计令牌：全部映射到 css/main.css 的既有 CSS 变量，
+   亮 / 暗色由 :root 与 html[data-theme="dark"] 自动驱动，不维护第二套色板 */
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --color-card: var(--sheet);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--sheet);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--cinnabar);
+  --color-primary-foreground: #fff;
+  --color-secondary: var(--ui-subtle);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--ui-subtle);
+  --color-muted-foreground: var(--ink-soft);
+  --color-accent: var(--ui-active);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: var(--cinnabar-deep);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--cinnabar);
+
+  --color-sidebar: var(--sheet);
+  --color-sidebar-foreground: var(--ink);
+  --color-sidebar-primary: var(--cinnabar);
+  --color-sidebar-primary-foreground: #fff;
+  --color-sidebar-accent: var(--ui-active);
+  --color-sidebar-accent-foreground: var(--ink);
+  --color-sidebar-border: var(--line);
+  --color-sidebar-ring: var(--cinnabar);
+
+  --radius: 0.375rem;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
