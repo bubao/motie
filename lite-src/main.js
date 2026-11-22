@@ -3,12 +3,13 @@
  * - 定位练字：整页描红，黑白屏优先；设置收进弹窗（内容 / 字体 / 字格），不占预览位置
  * - 预览区：点击字格放大（← / → 切换）；↑ / ↓ 逐字移动并高亮当前字
  * - ES5 语法、无外部网络请求、无动画；不依赖 CSS 变量（老浏览器兼容）
- * - 配置 / 内容模型 / 字格背景与完整版共享（见 js/config.js、js/content.js、js/zg-bg.js）
+ * - 配置 / 内容模型 / 字格背景 / 字体：lite 本地独立副本（lite-src/vendor/，与 web/src/core 同源，
+ *   改动共享逻辑时需同步两处）
  */
-import '../js/config.js';
-import '../js/content.js';
-import '../js/zg-bg.js';
-import '../js/font.js';
+import './vendor/config.js';
+import './vendor/content.js';
+import './vendor/zg-bg.js';
+import './vendor/font.js';
 
 (function () {
 	'use strict';
@@ -27,7 +28,7 @@ import '../js/font.js';
 		cellGap: 0.05
 	};
 
-	/* ==================== 自定义字体（注入 / 持久化收敛到 js/font.js） ==================== */
+	/* ==================== 自定义字体（注入 / 持久化收敛到 ./vendor/font.js） ==================== */
 	function applyFont(url) {
 		Z.Font.apply(url);
 	}

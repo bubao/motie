@@ -1,25 +1,20 @@
 /**
  * 完整版唯一状态源（Redux Toolkit）。
- * 配置从共享核心 Config 读取（与原生版共用 localStorage 键 zitie.config），
- * 任何变更同步回 window.Zitie.Config 并防抖持久化。
+ * 配置从 localStorage 读一份全新对象（无全局单例），键 zitie.config；
+ * 变更防抖落盘（saveConfig 只写 Schema 白名单字段）。
  */
 import { configureStore, createSlice } from '@reduxjs/toolkit';
-import { Config, ConfigSchema, ContentModel, DEFAULTS, normalizeField } from '../../js/core.js';
+import { ConfigSchema, ContentModel, DEFAULTS, normalizeField, loadConfig, saveConfig } from './core/index.js';
 import toastReducer, { pushToast, dismissToast } from './toastSlice.mjs';
 
-Config.load();
-
-function snapshot() {
-	const out = {};
-	Object.keys(ConfigSchema).forEach(function (key) { out[key] = Config[key]; });
-	return out;
-}
+/* 配置初值：盘上快照 + 默认值（按 Schema 归一化） */
+const initialConfig = loadConfig();
 
 const CONTENT_HISTORY_MAX = 100;
 
 const configSlice = createSlice({
 	name: 'config',
-	initialState: Object.assign(snapshot(), { history: { past: [], future: [] } }),
+	initialState: Object.assign(initialConfig, { history: { past: [], future: [] } }),
 	reducers: {
 		setField: function (state, action) {
 			const key = action.payload.key;
@@ -125,20 +120,11 @@ let prevConfig = store.getState().config;
 
 store.subscribe(function () {
 	const config = store.getState().config;
-	/* 仅配置变化才镜像 + 持久化（toast 等 UI 动作不触发写盘） */
+	/* 仅配置变化才持久化（toast 等 UI 动作不触发写盘） */
 	if (config === prevConfig) return;
 	prevConfig = config;
-	/* 只镜像变化的字段（P3-13）：逐键比较，值未变不写回、不触发持久化 */
-	var changed = false;
-	Object.keys(ConfigSchema).forEach(function (key) {
-		if (Config[key] !== config[key]) {
-			Config[key] = config[key];
-			changed = true;
-		}
-	});
-	if (!changed) return;
 	if (saveTimer) clearTimeout(saveTimer);
-	saveTimer = setTimeout(function () { Config.save(); }, 150);
+	saveTimer = setTimeout(function () { saveConfig(config); }, 150);
 });
 
 /* 多标签页同步（P3-14）：其他标签页写盘时，重载 Config 并全量同步到本 store。
@@ -147,8 +133,7 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 	window.addEventListener('storage', function (e) {
 		if (!e || e.key !== 'zitie.config') return;
 		try {
-			Config.load();
-			store.dispatch(importConfig(snapshot()));
+			store.dispatch(importConfig(loadConfig()));
 		} catch (err) { /* 盘上快照损坏时忽略，保留本页当前值 */ }
 	});
 }

@@ -1,16 +1,15 @@
 /**
  * 共享核心回归测试（node test/shared.test.js / npm test）。
  * 覆盖：ConfigSchema 归一化、旧键迁移、parse / paginate / pageLayout / cellRole / SheetLayout。
- * 共享核心是 IIFE（挂 window.Zitie），此处用最小 window + localStorage 模拟加载。
+ * 核心为 web/src/core 的 ESM 模块：用 esbuild 打成 CJS 单文件后执行，配最小 window + localStorage。
  */
 'use strict';
 
-var fs = require('fs');
 var path = require('path');
 var assert = require('assert');
+var esbuild = require('esbuild');
 
 var ROOT = path.resolve(__dirname, '..');
-var CORE = ['js/config.js', 'js/content.js', 'js/zg-bg.js', 'js/sheet-layout.js'];
 
 function makeStorage(initial) {
 	var map = {};
@@ -22,13 +21,27 @@ function makeStorage(initial) {
 	};
 }
 
+/* 核心 ESM 用 esbuild 打成 CJS 单文件后执行；每次执行得到独立模块实例
+ * （Config 状态不跨测试串，与旧版逐文件 eval 语义一致）。 */
+var CORE_BUNDLE = null;
 function loadCore(storage) {
 	var win = { localStorage: storage || makeStorage(), ZITIE_BOOT: {} };
 	global.window = win;
-	CORE.forEach(function (file) {
-		eval(fs.readFileSync(path.join(ROOT, file), 'utf8'));
-	});
-	return win.Zitie;
+	if (!CORE_BUNDLE) {
+		var result = esbuild.buildSync({
+			entryPoints: [path.join(ROOT, 'web/src/core/index.js')],
+			bundle: true,
+			write: false,
+			format: 'cjs',
+			platform: 'browser',
+			target: 'es2017',
+			logLevel: 'warning'
+		});
+		CORE_BUNDLE = result.outputFiles[0].text;
+	}
+	var mod = { exports: {} };
+	new Function('module', 'exports', 'require', CORE_BUNDLE)(mod, mod.exports, require);
+	return mod.exports;
 }
 
 var passed = 0;
@@ -95,31 +108,31 @@ test('normalizeField：未登记字段原样返回', function () {
 
 /* ---------- Config 持久化 ---------- */
 
-test('Config.load：非法保存值按 Schema 归一化', function () {
+test('loadConfig：非法保存值按 Schema 归一化', function () {
 	var storage = makeStorage({ 'zitie.config': JSON.stringify({ Template: 'x', RowGap: 5, Cols: 99, InkAlpha: 0 }) });
 	var Z = loadCore(storage);
-	Z.Config.load();
-	assert.strictEqual(Z.Config.Template, 'normal');
-	assert.strictEqual(Z.Config.RowGap, 1);
-	assert.strictEqual(Z.Config.Cols, Z.MAX_COLS);
-	assert.strictEqual(Z.Config.InkAlpha, Z.MIN_INK_ALPHA);
+	var cfg = Z.loadConfig();
+	assert.strictEqual(cfg.Template, 'normal');
+	assert.strictEqual(cfg.RowGap, 1);
+	assert.strictEqual(cfg.Cols, Z.MAX_COLS);
+	assert.strictEqual(cfg.InkAlpha, Z.MIN_INK_ALPHA);
 });
 
-test('Config.load：旧键 zitie-lite.config 迁移并写回统一键', function () {
+test('loadConfig：旧键 zitie-lite.config 迁移并写回统一键', function () {
 	var storage = makeStorage({ 'zitie-lite.config': JSON.stringify({ TraceMode: true, Content: '永' }) });
 	var Z = loadCore(storage);
-	Z.Config.load();
-	assert.strictEqual(Z.Config.Template, 'trace');
+	var cfg = Z.loadConfig();
+	assert.strictEqual(cfg.Template, 'trace');
 	assert.strictEqual(storage.getItem('zitie-lite.config'), null);
 	assert.ok(storage.getItem('zitie.config'));
 });
 
-test('Config.save：只写 Schema 白名单 + 特殊字段', function () {
+test('saveConfig：只写 Schema 白名单 + 特殊字段', function () {
 	var storage = makeStorage();
 	var Z = loadCore(storage);
-	Z.Config.load();
-	Z.Config.evil = 'x';
-	Z.Config.save();
+	var cfg = Z.loadConfig();
+	cfg.evil = 'x';
+	Z.saveConfig(cfg);
 	var data = JSON.parse(storage.getItem('zitie.config'));
 	assert.strictEqual(data.evil, undefined);
 	assert.strictEqual(data.Template, 'normal');
@@ -127,18 +140,20 @@ test('Config.save：只写 Schema 白名单 + 特殊字段', function () {
 	assert.strictEqual(data.ResourceMode, 'cdn');
 });
 
-test('Config.snapshot / 预设：白名单快照、保存 / 加载 / 删除', function () {
+test('snapshotConfig / 预设：白名单快照、保存 / 加载 / 删除', function () {
 	var Z = loadCore();
-	var snap = Z.Config.snapshot();
+	var cfg = Z.loadConfig();
+	cfg.evil = 'x';
+	var snap = Z.snapshotConfig(cfg);
 	assert.strictEqual(snap.Template, 'normal');
 	assert.strictEqual(snap.GridSize, 80);
 	assert.strictEqual(snap.evil, undefined);
-	assert.deepStrictEqual(Z.Config.loadPresets(), {});
-	Z.Config.savePreset('硬笔', { Template: 'trace', GridSize: 96 });
-	assert.deepStrictEqual(Object.keys(Z.Config.loadPresets()), ['硬笔']);
-	assert.strictEqual(Z.Config.loadPresets()['硬笔'].GridSize, 96);
-	Z.Config.deletePreset('硬笔');
-	assert.deepStrictEqual(Z.Config.loadPresets(), {});
+	assert.deepStrictEqual(Z.loadPresets(), {});
+	Z.savePreset('硬笔', { Template: 'trace', GridSize: 96 });
+	assert.deepStrictEqual(Object.keys(Z.loadPresets()), ['硬笔']);
+	assert.strictEqual(Z.loadPresets()['硬笔'].GridSize, 96);
+	Z.deletePreset('硬笔');
+	assert.deepStrictEqual(Z.loadPresets(), {});
 });
 
 /* ---------- 内容模型 ---------- */
@@ -349,16 +364,16 @@ test('ConfigSchema：字体字段（FontSource / PreviewText）归一化', funct
 	assert.strictEqual(Z.normalizeField('PreviewText', 123), Z.DEFAULTS.PreviewText);
 });
 
-test('Config.load：旧 fontURL 迁移为 FontSource（url）', function () {
+test('loadConfig：旧 fontURL 迁移为 FontSource（url）', function () {
 	var storage = makeStorage({ 'zitie.config': JSON.stringify({ fontURL: 'https://a.com/f.woff2' }) });
 	var Z = loadCore(storage);
-	Z.Config.load();
-	assert.deepStrictEqual(Z.Config.FontSource, { type: 'url', url: 'https://a.com/f.woff2' });
+	var cfg = Z.loadConfig();
+	assert.deepStrictEqual(cfg.FontSource, { type: 'url', url: 'https://a.com/f.woff2' });
 	/* 已显式保存过来源（default）时不迁移 */
 	var storage2 = makeStorage({ 'zitie.config': JSON.stringify({ fontURL: 'https://a.com/f.woff2', FontSource: { type: 'default' } }) });
 	var Z2 = loadCore(storage2);
-	Z2.Config.load();
-	assert.deepStrictEqual(Z2.Config.FontSource, { type: 'default' });
+	var cfg2 = Z2.loadConfig();
+	assert.deepStrictEqual(cfg2.FontSource, { type: 'default' });
 });
 
 test('pageLayout：行距越大行数越少', function () {
@@ -420,6 +435,19 @@ test('cellRole：五种模板角色分布与未知模板回退', function () {
 	/* traceCount 边界：缩略图按同一函数生成，角色分布随 traceCount 收缩 / 扩张（T1.12） */
 	assert.deepStrictEqual([0, 1, 2].map(function (i) { return Z.Layout.cellRole(i, 'trace3', 1); }), ['model', 'trace', 'trace']);
 	assert.deepStrictEqual([0, 1, 2, 3, 4, 5, 6].map(function (i) { return Z.Layout.cellRole(i, 'trace3', 6); }), ['model', 'model', 'model', 'model', 'model', 'model', 'trace']);
+});
+
+test('cellRole：节奏描红（范字 / 描红 / 临写 + 逐行递减）', function () {
+	var Z = loadCore();
+	var r = { model: 2, trace: 3, decay: 0 };
+	assert.deepStrictEqual([0, 1, 2, 3, 4, 5].map(function (i) { return Z.Layout.cellRole(i, 'rhythm', 0, 0, r); }), ['model', 'model', 'trace', 'trace', 'trace', 'blank']);
+	/* 递减：每行描红 -1，范字保留；描红减到 0 后其余全为临写 */
+	var d = { model: 1, trace: 3, decay: 1 };
+	assert.deepStrictEqual([0, 1, 2, 3, 4].map(function (i) { return Z.Layout.cellRole(i, 'rhythm', 0, 0, d); }), ['model', 'trace', 'trace', 'trace', 'blank']);
+	assert.deepStrictEqual([0, 1, 2, 3].map(function (i) { return Z.Layout.cellRole(i, 'rhythm', 0, 1, d); }), ['model', 'trace', 'trace', 'blank']);
+	assert.deepStrictEqual([0, 1, 2, 3].map(function (i) { return Z.Layout.cellRole(i, 'rhythm', 0, 2, d); }), ['model', 'trace', 'blank', 'blank']);
+	/* 缺省参数回退默认（1 范 3 描，其余临写） */
+	assert.deepStrictEqual([0, 1, 2, 3, 4].map(function (i) { return Z.Layout.cellRole(i, 'rhythm', 0, 0, undefined); }), ['model', 'trace', 'trace', 'trace', 'blank']);
 });
 
 test('cellRole：参数对象（model / trace / blank / lead / repeat）', function () {
@@ -539,6 +567,26 @@ test('buildZgSvg：作文格（type6）纯方格无内线，数字格（type7）
 	var sz = Z.buildZgSvg('7', '1');
 	assert.ok(sz.indexOf('M1 53 L79 53') >= 0, '数字格应为下 1/3 基线横线 y=53');
 	assert.strictEqual((sz.match(/<path[^>]*>/g) || []).length, 2, '数字格 = 基线横线 + 外框');
+});
+
+test('buildZgSvg：格线粗细（倍率）与外框样式（实 / 虚 / 无框）', function () {
+	var Z = loadCore();
+	/* 默认：外框 2px 实线、内部虚线 1px */
+	var base = Z.buildZgSvg('1', '1');
+	assert.ok(/stroke-width="2" stroke="/.test(base), '默认外框 2px');
+	/* 倍率 ×2：外框 4px、内部线 2px */
+	var thick = Z.buildZgSvg('1', '1', 200, 'solid');
+	assert.ok(/stroke-width="4" stroke="/.test(thick), '×2 外框 4px');
+	assert.ok(/stroke-dasharray="4,4" stroke-width="2"/.test(thick), '×2 内部虚线 2px');
+	/* 虚线外框 */
+	var dash = Z.buildZgSvg('1', '1', 100, 'dashed');
+	assert.ok(/stroke-dasharray="4,4" stroke-width="2" stroke="/.test(dash), '虚线外框');
+	/* 无框：田字格只剩 2 条内部线 */
+	var none = Z.buildZgSvg('1', '1', 100, 'none');
+	assert.strictEqual((none.match(/<path[^>]*>/g) || []).length, 2, '无框田字格只有 2 条内部线');
+	assert.ok(none.indexOf('M0 0 L80 0') === -1, '不应有外框路径');
+	/* 缺省参数与旧版一致 */
+	assert.strictEqual(Z.buildZgSvg('1', '1'), base);
 });
 
 test('pageLayout：拼音格行盒 1.4×格（其余 1.0×格），行数相应减少', function () {

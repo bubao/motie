@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { Zitie as Z } from '../../js/core.js';
+import { ContentModel, INK_RGB, getPinyin } from './core/index.js';
+import { useSheetLayout } from './hooks/useSheetLayout.js';
+import { useZgBackground } from './hooks/useZgBackground.js';
 import { replaceHan } from './store.js';
 import { BigPreview } from './BigPreview.jsx';
 
@@ -25,7 +27,7 @@ function mmPx(value) { return Math.round(mmNum(value)) + 'px'; }
 function mmFloorPx(value) { return Math.floor(mmNum(value)) + 'px'; }
 
 /**
- * 预览：直接消费版式真源 Z.SheetLayout.compute()，与原生版 / PDF / 打印同源。
+ * 预览：直接消费版式真源 useSheetLayout()（SheetLayout.compute），与原生版 / PDF / 打印同源。
  * 颜色 / 行距 / 格子大小内联，避免依赖 CSS 变量在 React 外的副作用。
  * 交互：单击字格进入单字编辑（T1.10），双击 / Space 打开放大预览（T1.9）。
  */
@@ -47,23 +49,8 @@ export function Preview({ pinyinReady }) {
 	const [rendered, setRendered] = useState({ 0: true });
 	const [scale, setScale] = useState(1); /* 屏幕预览缩放：适应预览区宽度 */
 
-	const layout = useMemo(function () {
-		return Z.SheetLayout.compute({
-			content: config.Content,
-			title: config.Title,
-			template: config.Template,
-			traceCount: config.TraceCount,
-			cols: config.Cols,
-			rowGap: config.RowGap,
-			gridPx: config.GridSize,
-			gridRatio: config.GridRatio,
-			config: config
-		});
-	/* 依赖必须覆盖 compute 实际读取的全部字段：ZgType / GridRatio 决定行盒高（拼音格 1.4×，
-	 * 宽高比可调）→ 行数 / 行距，Page / Margin 未作为 options 传入（compute 回退读 config），
-	 * 漏掉会导致切换字格 / 改页边距 / 改宽高比时命中旧缓存：行数、行距与格子实际尺寸不符，
-	 * 内容把纸张撑高或行距错乱。 */
-	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.GridRatio, config.ZgType, config.Page, config.Margin]);
+	/* 版式真源：依赖全量收敛在 hook 内（见 hooks/useSheetLayout.js），不再手写依赖列表 */
+	const layout = useSheetLayout(config);
 	const pageCount = layout.pages.length;
 
 	/* 按需渲染（T2.4）：观察 .rp-page 进入视口（提前 120%），仅标记渲染；
@@ -207,17 +194,17 @@ export function Preview({ pinyinReady }) {
 		el.textContent = '@page{size:' + config.Page.width + 'mm ' + config.Page.height + 'mm;margin:' + m.top + 'mm ' + m.right + 'mm ' + m.bottom + 'mm ' + m.left + 'mm;}';
 	}, [config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left]);
 
-	const rgb = Z.INK_RGB[config.InkColor] || Z.INK_RGB.cinnabar;
+	const rgb = INK_RGB[config.InkColor] || INK_RGB.cinnabar;
 	const modelColor = 'rgba(' + rgb + ', ' + config.InkAlpha + ')';
 	const traceColor = 'rgba(' + rgb + ', ' + (config.InkAlpha * 0.5) + ')';
 	/* 字格背景：拼音格上区四线三格 + 下区田字格，屏幕预览与字帖（打印 / PDF）一致 */
-	const zg = Z.getZgBackground(config.ZgType, config.ZgColor);
+	const zg = useZgBackground(config.ZgType, config.ZgColor, config.ZgLineScale, config.ZgLineMode);
 	/* 格子尺寸 / 背景由字格类型决定（关闭「显示拼音」不应改变格子）；拼音仅「拼音格」在预览叠加显示（字帖不显示） */
 	const isPyGrid = config.ZgType === '5';
 	const showPy = config.ShowPinyin && isPyGrid;
 	/* 汉字总数：仅内容变化时重算（P3-13） */
 	const charCount = useMemo(function () {
-		return Z.ContentModel.parse(config.Content).total;
+		return ContentModel.parse(config.Content).total;
 	}, [config.Content]);
 
 	/* 进入编辑：输入框自动聚焦并全选 */
@@ -311,9 +298,9 @@ export function Preview({ pinyinReady }) {
 	}
 
 	function onDraftChange(e) {
-		var parts = Z.ContentModel.splitChars(String(e.target.value));
+		var parts = ContentModel.splitChars(String(e.target.value));
 		var ch = parts.length ? parts[parts.length - 1] : '';
-		setDraft(ch && Z.ContentModel.isHan(ch) ? ch : '');
+		setDraft(ch && ContentModel.isHan(ch) ? ch : '');
 	}
 
 	function onDraftKeyDown(e) {
@@ -434,7 +421,7 @@ export function Preview({ pinyinReady }) {
 														return (
 															<span className={'cell' + (isPyGrid ? ' has-pinyin' : '')} key={c}>
 																{showPy && (
-																	<span className="cell-pinyin">{pinyinReady ? Z.getPinyin(cell.char) : ''}</span>
+																	<span className="cell-pinyin">{pinyinReady ? getPinyin(cell.char) : ''}</span>
 																)}
 																<span
 																	className={'hz-line is-' + cell.role}

@@ -1,14 +1,14 @@
 /**
  * 字体管理器（T3.3）：本地字体导入 / 预览 / 重命名 / 启用禁用 / 删除 / 应用，
  * 并保留网络字体地址与系统默认字体。
- * - 二进制存 IndexedDB（Z.FontStore），元数据存 localStorage（zitie.fonts）；
- * - 应用状态写 Redux（FontSource），实际注入由 App 订阅调 Z.Font.use；
+ * - 二进制存 IndexedDB（FontStore），元数据存 localStorage（zitie.fonts）；
+ * - 应用状态写 Redux（FontSource），实际注入由 App 订阅调 Font.use；
  * - 预览为每个本地字体注入独立 family（ziti-prev-<id>），卸载时移除。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { pushToast, setField, setFontSource, store } from './store.js';
-import { FontStore, Zitie as Z } from '../../js/core.js';
+import { FontStore, Font, sanitizeFontURL } from './core/index.js';
 
 const FONT_EXT_RE = /\.(ttf|otf|woff2?)$/i;
 const MAX_FONT_SIZE = 20 * 1024 * 1024;
@@ -121,11 +121,11 @@ export function FontManager() {
 
 	/* 失败时恢复当前生效来源（App 订阅也会再注入一次，幂等） */
 	function restoreCurrent() {
-		Z.Font.use(store.getState().config.FontSource || { type: 'default' });
+		Font.use(store.getState().config.FontSource || { type: 'default' });
 	}
 
 	function applyUrl() {
-		var clean = Z.sanitizeFontURL(urlValue);
+		var clean = sanitizeFontURL(urlValue);
 		if (urlValue.trim() && !clean) {
 			setHint('字体地址无效：仅支持 http(s) 字体或相对路径。');
 			return;
@@ -135,7 +135,7 @@ export function FontManager() {
 			return;
 		}
 		setHint('正在验证字体…');
-		Z.Font.use({ type: 'url', url: clean }).then(function (ok) {
+		Font.use({ type: 'url', url: clean }).then(function (ok) {
 			if (ok) {
 				dispatch(setFontSource({ type: 'url', url: clean }));
 				setHint('');
@@ -203,7 +203,7 @@ export function FontManager() {
 	function applyLocal(f) {
 		if (!f || f.disabled || busy) return;
 		setBusy(true);
-		Z.Font.use({ type: 'local', id: f.id }).then(function (ok) {
+		Font.use({ type: 'local', id: f.id }).then(function (ok) {
 			setBusy(false);
 			if (ok) {
 				dispatch(setFontSource({ type: 'local', id: f.id }));

@@ -6,6 +6,7 @@ import { ToastHost } from './ToastHost.jsx';
 	import { usePdfExport } from './usePdfExport.js';
 	import { usePrint } from './usePrint.js';
 import { setField } from './store.js';
+import { Font, loadPinyin, setResourceMode, applyAssets } from './core/index.js';
 
 const THEME_NAMES = { light: '浅色', dark: '深色', system: '跟随系统' };
 const THEME_KEYS = ['light', 'dark', 'system'];
@@ -13,6 +14,7 @@ const THEME_KEYS = ['light', 'dark', 'system'];
 export default function App() {
 	const [pinyinReady, setPinyinReady] = useState(false);
 	const fontSource = useSelector(function (s) { return s.config.FontSource; });
+	const resourceMode = useSelector(function (s) { return s.config.ResourceMode; });
 	const theme = useSelector(function (s) { return s.config.Theme; });
 	const dispatch = useDispatch();
 	const { busy, exportPdf } = usePdfExport();
@@ -39,12 +41,18 @@ export default function App() {
 
 	/* 自定义字体：配置真源在 Redux，按来源注入 / 移除（屏幕与 PDF 同步） */
 	useEffect(function () {
-		window.Zitie.Font.use(fontSource || { type: 'default' });
+		Font.use(fontSource || { type: 'default' });
 	}, [fontSource]);
+
+	/* 第三方资源来源：CDN / 本地 vendor 为全局单例，切换后重新加载并刷新状态行 */
+	useEffect(function () {
+		setResourceMode(resourceMode);
+		applyAssets();
+	}, [resourceMode]);
 
 	useEffect(function () {
 		let alive = true;
-		window.Zitie.loadPinyin()
+		loadPinyin()
 			.then(function () { if (alive) setPinyinReady(true); })
 			.catch(function () { /* 拼音库不可用时格子仍可用，仅无拼音 */ });
 		return function () { alive = false; };

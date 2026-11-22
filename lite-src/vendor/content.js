@@ -1,3 +1,4 @@
+/* lite 独立副本：与 web/src/core 同源，改动共享逻辑需同步两处（语法风格有意不同步） */
 /**
  * 字帖内容模型：把「字帖内容」解析为行（换行）与分页（空行），
  * 供页面渲染、打印分页与 PDF 导出共用，保证三处分页口径一致。
@@ -297,9 +298,20 @@
 	}
 
 	Z.Layout = {
-		cellRole: function (index, template, traceCount, rowIndex) {
+		cellRole: function (index, template, traceCount, rowIndex, rhythm) {
 			/* 对象参数优先；字符串（旧枚举）仍可用 */
 			if (template && typeof template === 'object') return roleFromParams(index, template, rowIndex);
+			if (template === 'rhythm') {
+				/* 节奏描红：每行前 model 格范字（深），接着 trace 格描红（浅），其余 blank（临写）。
+				 * decay > 0 时每行描红递减（范字保留），逐行从「描红多」过渡到「全临写」。 */
+				var m = rhythm && rhythm.model > 0 ? rhythm.model : Z.DEFAULTS.TraceModel;
+				var t = rhythm && rhythm.trace != null ? Math.max(0, rhythm.trace) : Z.DEFAULTS.TraceTrace;
+				var decay = rhythm && rhythm.decay > 0 ? rhythm.decay : 0;
+				var tRow = Math.max(0, t - (rowIndex || 0) * decay);
+				if (index < m) return 'model';
+				if (index < m + tRow) return 'trace';
+				return 'blank';
+			}
 			var fn = TEMPLATE_ROLE[template] || TEMPLATE_ROLE.normal;
 			return fn(index, traceCount);
 		}

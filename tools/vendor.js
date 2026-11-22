@@ -1,7 +1,7 @@
 /**
  * 下载「本地 vendor」模式的第三方资源（不入库，体积较大）。
  * 用法：npm run vendor
- * 下载后由 js/assets.js 在「资源来源 = 本地 vendor」时加载，
+ * 下载后由 web/src/core/assets.js 在「资源来源 = 本地 vendor」时加载，
  * 页面需通过 http 服务托管（file:// 下浏览器会拦截本地 ESM import）。
  */
 const fs = require('fs');

@@ -15,15 +15,15 @@
 - 版式预设（模板 / 字格 / 页边距组合）持久化
 - 脱离浏览器标签页，独立窗口与 Dock / 任务栏存在感
 
-明确**不做**的事：不重写排版核心（`js/` 与 `css/` 是经过实测的真源）；不引入 Node 运行时；不把 Kindle 版并入桌面（它继续是零依赖单文件）；不引入 MCP。
+明确**不做**的事：不重写排版核心（`web/src/core/` 与 `css/` 是经过实测的真源）；不引入 Node 运行时；不把 Kindle 版并入桌面（它继续是零依赖单文件）；不引入 MCP。
 
 ## 2. 可复用资产盘点
 
 | 资产 | 桌面版处置 |
 | --- | --- |
-| `js/content.js`（parse / paginate / 空临格语义） | **原样复用**（classic script + ESM 层） |
-| `js/sheet-layout.js`、`js/pdf.js`、`js/config.js`、`js/fonts.js` | 原样复用；`fonts.js` 的 IndexedDB 导入在桌面端切到 Go 字体服务 |
-| `js/pinyin.js`、`js/stroke.js`（CDN / vendor 加载器） | 复用；桌面端可默认 `vendor` 本地化，彻底离线 |
+| `web/src/core/content.js`（parse / paginate / 空临格语义） | **原样复用**（纯逻辑 ESM） |
+| `web/src/core/sheet-layout.js`、`pdf.js`、`config.js`、`font-store.js`、`font.js` | 原样复用；IndexedDB 字体仓库在桌面端切到 Go 字体服务 |
+| `web/src/core/pinyin.js`、`stroke.js`、`assets.js`（CDN / vendor 加载器） | 复用；桌面端可默认 `vendor` 本地化，彻底离线 |
 | `css/main.css`、`web/src/*`（React 面板 / 预览 / 放大层） | 复用；把「存储 / 文件 / 打印 / 字体」调用切到 IPC 客户端 |
 | `lite/`、`lite-src/` | **独立保留**，桌面端提供「导出 Kindle 版」入口 |
 | `test/shared.test.js` | 共享核心测试继续跑；新增 Go 侧契约测试 |
@@ -37,7 +37,7 @@ flowchart TB
     WIN["Windows: WebView2 或浏览器 --app"]
     LNX["Linux: WebKitGTK 或浏览器 --app"]
   end
-  subgraph FE["前端（复用 web/src + js/ + css/）"]
+  subgraph FE["前端（复用 web/src/core + web/src + css/）"]
     UI["React SPA（内嵌 go:embed）"]
     IPC["ipc/client.ts<br/>config / files / fonts / pdf / print"]
   end
@@ -76,7 +76,7 @@ motie/
 │   └── infrastructure/     # fsutil / netutil / jsonutil / procgroup ...
 ├── native_macos/
 │   └── main.swift          # macOS WKWebView 启动器
-├── web/ js/ css/ lite/ lite-src/   # 现有前端与共享核心
+├── web/ css/ lite/ lite-src/   # 现有前端（核心在 web/src/core）与练字版副本
 ├── cmd/typegen/            # Go struct → TS 类型 + JSON 样本
 └── docs/desktop-architecture.md
 ```
@@ -156,7 +156,7 @@ motie/
 - `lite/index.html` 继续是**零依赖单文件**（约 35 KB，file:// 直开），服务模式（字体列表）保持不变。
 - 「独立」指分发 / 运行形态：可拷到 Kindle / 断网 / 别人电脑直接打开；**同时允许**桌面 Go server 托管 `/lite/`，复用字体服务，但不依赖它。
 - 桌面端一键「导出 Kindle 版」= 复制 `lite/index.html`（或经 Go 重新构建）到目标目录。
-- lite 的 UX 与标准版共享 `js/content.js`、`js/sheet-layout.js`、`css` 字格逻辑，继续同步修复。
+- lite 的 UX 与标准版共享 `lite-src/vendor/`（与 `web/src/core` 同源的独立副本）与 `css` 字格逻辑，继续同步修复。
 
 ## 10. 分阶段路线（建议 TODO 驱动）
 

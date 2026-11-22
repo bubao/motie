@@ -1,3 +1,4 @@
+/* lite 独立副本：与 web/src/core 同源，改动共享逻辑需同步两处（语法风格有意不同步） */
 /**
  * 常量与配置（localStorage 持久化）。
  * 完整版与 Kindle 精简版共享此文件：完整版以 <script> 直接引入，
@@ -28,6 +29,14 @@
 	Z.MAX_GRID_SIZE = 160;
 	Z.MIN_GRID_RATIO = 60;   /* 宽高比下限（×0.60）；0 = 自动（随字格类型） */
 	Z.MAX_GRID_RATIO = 160;  /* 宽高比上限（×1.60） */
+	Z.MIN_TRACE_MODEL = 1;   /* 节奏描红：每行最少范字格 */
+	Z.MAX_TRACE_MODEL = 10;
+	Z.MIN_TRACE_TRACE = 0;   /* 每行描红格（其余为临写 blank） */
+	Z.MAX_TRACE_TRACE = 10;
+	Z.MIN_TRACE_DECAY = 0;   /* 每行递减描红格：0 = 不变 */
+	Z.MAX_TRACE_DECAY = 5;
+	Z.MIN_ZG_LINE_SCALE = 50;   /* 格线宽倍率 ×100：×0.50 */
+	Z.MAX_ZG_LINE_SCALE = 200;  /* ×2.00 */
 	Z.MIN_TRACE_COUNT = 1;
 	Z.MAX_TRACE_COUNT = 6;
 	Z.MIN_COLS = 1;
@@ -58,6 +67,11 @@
 		ZgColor: '1',    /* 字格颜色：1 绿 / 2 灰 / 3 红 */
 		GridSize: 80,    /* 格子宽（px，理想值 → 决定列数，实际格宽均分铺满） */
 		GridRatio: 0,    /* 格子宽高比 ×100：0 = 自动（拼音格 1.4，其余 1.0）；60–160 = 用户值 */
+		TraceModel: 1,   /* 节奏描红：每行前 N 格范字（深） */
+		TraceTrace: 3,   /* 节奏描红：每行接着 M 格描红（浅），其余临写（空临格） */
+		TraceDecay: 0,   /* 节奏描红：每行递减的描红格数（逐行变少） */
+		ZgLineScale: 100, /* 格线宽倍率 ×100（50–200，步进 25） */
+		ZgLineMode: 'solid', /* 格外框样式：solid 实线 / dashed 虚线 / none 无框 */
 		ShowPinyin: true,  /* 预览在拼音格内上区显示拼音（仅 ZgType=5；字帖不显示） */
 		StrokeAnim: true,  /* 点击字格播放笔顺动画 */
 		Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
@@ -78,9 +92,14 @@
 		{ key: 'trace', name: '整页描红' },
 		{ key: 'trace3', name: '一字三描红' },
 		{ key: 'lead', name: '首字范字' },
+		{ key: 'rhythm', name: '节奏描红' },
 		{ key: 'blank', name: '空临格' }
 	];
 	Z.TEMPLATE_KEYS = Z.TEMPLATES.map(function (t) { return t.key; });
+
+	/* 格线（外框）样式：实线 / 虚线 / 无框 */
+	Z.ZG_LINE_MODES = ['solid', 'dashed', 'none'];
+	Z.ZG_LINE_MODE_NAMES = { solid: '实线', dashed: '虚线', none: '无框' };
 
 	/* 文字颜色 */
 	Z.INK_COLORS = {
@@ -153,6 +172,9 @@
 		Title:      { type: 'text', max: Z.MAX_TITLE_LENGTH, group: 'content' },
 		Template:   { type: 'enum', values: Z.TEMPLATE_KEYS, group: 'layout' },
 		TraceCount: { type: 'int', min: Z.MIN_TRACE_COUNT, max: Z.MAX_TRACE_COUNT, group: 'layout' },
+		TraceModel: { type: 'int', min: Z.MIN_TRACE_MODEL, max: Z.MAX_TRACE_MODEL, group: 'layout' },
+		TraceTrace: { type: 'int', min: Z.MIN_TRACE_TRACE, max: Z.MAX_TRACE_TRACE, group: 'layout' },
+		TraceDecay: { type: 'int', min: Z.MIN_TRACE_DECAY, max: Z.MAX_TRACE_DECAY, group: 'layout' },
 		Cols:       { type: 'int', min: 0, max: Z.MAX_COLS, group: 'layout', zeroLabel: '自适应' },
 		RowGap:     { type: 'percent', min: Z.MIN_GAP, max: Z.MAX_GAP, group: 'layout' },
 		VerticalAlign: { type: 'enum', values: Z.VERTICAL_ALIGNS, group: 'layout' },
@@ -162,6 +184,8 @@
 		CharOffsetY: { type: 'percent', min: Z.MIN_CHAR_OFFSET, max: Z.MAX_CHAR_OFFSET, group: 'text' },
 		ZgType:     { type: 'enum', values: Z.ZG_TYPES, group: 'grid' },
 		ZgColor:    { type: 'enum', values: Z.ZG_COLORS, group: 'grid' },
+		ZgLineScale: { type: 'int', min: Z.MIN_ZG_LINE_SCALE, max: Z.MAX_ZG_LINE_SCALE, step: 25, group: 'grid' },
+		ZgLineMode: { type: 'enum', values: Z.ZG_LINE_MODES, group: 'grid' },
 		GridSize:   { type: 'int', min: Z.MIN_GRID_SIZE, max: Z.MAX_GRID_SIZE, step: 1, group: 'grid' },
 		GridRatio:  { type: 'int', min: 0, max: Z.MAX_GRID_RATIO, step: 5, group: 'grid', zeroLabel: '自动' },
 		ShowPinyin: { type: 'bool', group: 'text' },
@@ -245,6 +269,9 @@
 		Title: Z.DEFAULTS.Title,
 		Template: Z.DEFAULTS.Template,
 		TraceCount: Z.DEFAULTS.TraceCount,
+		TraceModel: Z.DEFAULTS.TraceModel,
+		TraceTrace: Z.DEFAULTS.TraceTrace,
+		TraceDecay: Z.DEFAULTS.TraceDecay,
 		Cols: Z.DEFAULTS.Cols,
 		RowGap: Z.DEFAULTS.RowGap,
 		VerticalAlign: Z.DEFAULTS.VerticalAlign,
@@ -254,6 +281,8 @@
 		CharOffsetY: Z.DEFAULTS.CharOffsetY,
 		ZgType: Z.DEFAULTS.ZgType,
 		ZgColor: Z.DEFAULTS.ZgColor,
+		ZgLineScale: Z.DEFAULTS.ZgLineScale,
+		ZgLineMode: Z.DEFAULTS.ZgLineMode,
 		GridSize: Z.DEFAULTS.GridSize,
 		ShowPinyin: Z.DEFAULTS.ShowPinyin,
 		StrokeAnim: Z.DEFAULTS.StrokeAnim,

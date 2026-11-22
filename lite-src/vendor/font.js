@@ -1,12 +1,13 @@
+/* lite 独立副本：与 web/src/core 同源，改动共享逻辑需同步两处（语法风格有意不同步） */
 /**
  * 自定义字体（完整版与练字版共用）。
  * 三种来源：系统默认（default）/ 网络地址（url）/ 本地文件（local，二进制存 IndexedDB）。
  * - inject(url)：只做 url 注入（兼容旧调用）；
  * - apply(url)：inject + 写 Config + 持久化（练字版用）；
  * - use(source)：统一入口，按来源注入（完整版用，配置真源在 Redux）。
- * 屏幕（css/main.css / lite-src/style.css）与 PDF（js/pdf.js 读 body.custom-font）同步生效。
- * 依赖 js/config.js 的 Z.sanitizeFontURL / Z.guessFontFormat；
- * 本地来源依赖 js/font-store.js 的 Z.FontStore（精简版未加载，缺失时降级）。
+ * 屏幕（css/main.css / lite-src/style.css）与 PDF（标准版 web/src/core/pdf.js 读 body.custom-font）同步生效。
+ * 依赖同目录 config.js 的 Z.sanitizeFontURL / Z.guessFontFormat；
+ * 本地来源依赖标准版 web/src/core/font-store.js 的 FontStore（精简版未加载，缺失时降级）。
  */
 (function (Z) {
 	'use strict';

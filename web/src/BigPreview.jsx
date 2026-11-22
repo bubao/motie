@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Zitie as Z } from '../../js/core.js';
+import { getPinyin, loadPinyin, Stroke, loadHanziWriter } from './core/index.js';
 
 /* overlay 内可聚焦元素（用于 Tab 焦点陷阱） */
 var FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -30,9 +30,9 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, dx, dy, ratio 
 		animatingRef.current = false;
 		setAnimating(false);
 		/* 拼音：已就绪先同步显示；未就绪则等加载完成后补显 */
-		setPinyin(Z.getPinyin(char));
-		Z.loadPinyin().then(function () {
-			if (!cancelled) setPinyin(Z.getPinyin(char));
+		setPinyin(getPinyin(char));
+		loadPinyin().then(function () {
+			if (!cancelled) setPinyin(getPinyin(char));
 		});
 		/* 记录触发元素，关闭时返还焦点 */
 		returnFocusRef.current = document.activeElement;
@@ -43,7 +43,7 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, dx, dy, ratio 
 		return function () {
 			cancelled = true;
 			animatingRef.current = false;
-			Z.Stroke.destroy();
+			Stroke.destroy();
 			var el = returnFocusRef.current;
 			returnFocusRef.current = null;
 			if (el && typeof el.focus === 'function' && document.contains(el)) el.focus();
@@ -102,12 +102,12 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, dx, dy, ratio 
 	/* 主动播放笔顺：按需加载 HanziWriter；失败降级为静态字 */
 	function play() {
 		if (!stageRef.current || animatingRef.current) return;
-		var waiting = typeof Z.Assets.loadHanziWriter === 'function'
-			? Z.Assets.loadHanziWriter()
+		var waiting = typeof loadHanziWriter === 'function'
+			? loadHanziWriter()
 			: Promise.resolve();
 		Promise.resolve(waiting).catch(function () { return null; }).then(function () {
 			if (!stageRef.current) return;
-			var played = strokeAnim !== false && !reduceMotion && Z.Stroke.play(stageRef.current, char);
+			var played = strokeAnim !== false && !reduceMotion && Stroke.play(stageRef.current, char);
 			animatingRef.current = played;
 			if (!played) showStatic();
 			setAnimating(played);

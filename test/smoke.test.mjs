@@ -39,6 +39,12 @@ check('单文件内含预览容器标记', html.indexOf('printContent') !== -1 |
 check('单文件内含字体注入锚点（zitie-font-face）', html.indexOf('zitie-font-face') !== -1);
 check('单文件内含产品名「墨帖」', html.indexOf('墨帖') !== -1);
 
+/* 1.1 重构收口（P5）：核心已迁入 web/src/core，产物不得再出现旧的全局命名空间与 js/ 核心路径 */
+check('web/src/core/index.js 存在', exists(path.join(ROOT, 'web', 'src', 'core', 'index.js')));
+check('旧 js/ 核心目录已移除', !fs.existsSync(path.join(ROOT, 'js')));
+check('单文件不含旧核心全局挂载（window.Zitie=）', html.indexOf('window.Zitie=') === -1);
+check('单文件不含 js/ 核心脚本引用', html.indexOf('js/core.js') === -1 && html.indexOf('js/assets.js') === -1);
+
 /* 2. Chrome headless 直开 file:// 产物，断言 React 已渲染 */
 var CANDIDATES = [
 	'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -54,7 +60,7 @@ if (!chrome) {
 		var out = execFileSync(chrome, [
 			'--headless=new', '--disable-gpu', '--no-sandbox',
 			'--virtual-time-budget=8000', '--dump-dom', 'file://' + htmlPath
-		], { encoding: 'utf8', timeout: 40000, stdio: ['ignore', 'pipe', 'pipe'] });
+		], { encoding: 'utf8', timeout: 40000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 		check('headless 直开产物渲染出预览容器', out.indexOf('printContent') !== -1, 'dump-dom 未含 printContent');
 		check('headless 直开产物渲染出面板', out.indexOf('rp-panel') !== -1 || out.indexOf('rp-field') !== -1, 'dump-dom 未含面板标记');
 	} catch (e) {

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { ConfigSchema } from '../../js/core.js';
+import { ConfigSchema } from './core/index.js';
 import { setField } from './store.js';
 
 /**

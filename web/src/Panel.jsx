@@ -5,26 +5,37 @@ import { FontManager } from './FontManager.jsx';
 import { SchemaRange, SchemaPercentRange } from './controls.jsx';
 import {
 	ConfigSchema,
+	ContentModel,
+	Layout,
+	buildZgSvg,
 	INK_COLORS,
 	INK_COLOR_KEYS,
 	SAMPLE_TEXT,
 	SAMPLES,
 	TEMPLATES,
-	Zitie as Z,
 	ZG_COLOR_VALUES,
 	ZG_COLORS,
 	ZG_TYPES,
-	VERTICAL_ALIGNS
-} from '../../js/core.js';
+	ZG_LINE_MODES,
+	ZG_LINE_MODE_NAMES,
+	VERTICAL_ALIGNS,
+	loadPresets,
+	savePreset,
+	deletePreset,
+	renamePreset,
+	snapshotConfig,
+	renderAssetStatus
+} from './core/index.js';
+import { useSheetLayout } from './hooks/useSheetLayout.js';
 
 /* 模板缩略图：按「当前生效列数 + traceCount」用与预览同一套 Z.Layout.cellRole 生成角色，
    保证缩略图与行内规律一致（T1.12）。列数过多时截断，避免缩略图过宽。 */
 const TPL_MAX_CELLS = 8;
 
-function tplCells(template, cols, traceCount) {
+function tplCells(template, cols, traceCount, rhythm) {
 	var out = [];
 	for (var i = 0; i < cols; i++) {
-		var role = Z.Layout.cellRole(i, template, traceCount);
+		var role = Layout.cellRole(i, template, traceCount, 0, rhythm);
 		out.push(role === 'model' ? 'on' : role === 'trace' ? 'soft' : 'empty');
 	}
 	return out;
@@ -224,22 +235,11 @@ function ContentTools({ textareaRef }) {
 	const [confirming, setConfirming] = useState(false);
 	/* 重复字统计：仅内容变化时重算（P3-13） */
 	const stats = useMemo(function () {
-		return Z.ContentModel.hanStats(config.Content);
+		return ContentModel.hanStats(config.Content);
 	}, [config.Content]);
 
-	/* 当前版式每页行数：用于「插入空白页」按版式生成一整页空临格 */
-	var layoutInfo = useMemo(function () {
-		return Z.SheetLayout.compute({
-			content: config.Content,
-			title: config.Title,
-			template: config.Template,
-			traceCount: config.TraceCount,
-			cols: config.Cols,
-			rowGap: config.RowGap,
-			gridPx: config.GridSize,
-			config: config
-		});
-	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize]);
+	/* 当前版式每页行数：用于「插入空白页」按版式生成一整页空临格（依赖收敛在 hook 内） */
+	var layoutInfo = useSheetLayout(config);
 
 	/* 在内容框光标处插入一个空格 = 一个空临格（有格无字） */
 	function insertSpace() {
@@ -386,7 +386,7 @@ function PresetGroup() {
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
 	const [presetName, setPresetName] = useState('');
-	const [presets, setPresets] = useState(function () { return Z.Config.loadPresets(); });
+	const [presets, setPresets] = useState(function () { return loadPresets(); });
 	const [hint, setHint] = useState('');
 	const [renamingName, setRenamingName] = useState(null);
 	const [renameValue, setRenameValue] = useState('');
@@ -403,20 +403,20 @@ function PresetGroup() {
 			setHint('请先输入预设名称。');
 			return;
 		}
-		setPresets(Z.Config.savePreset(name, presetSnapshot()));
+		setPresets(savePreset(name, presetSnapshot()));
 		setPresetName('');
 		dispatch(pushToast({ type: 'success', text: '已保存预设「' + name + '」。' }));
 	}
 
 	function onLoadPreset(name) {
-		var data = Z.Config.loadPresets()[name];
+		var data = loadPresets()[name];
 		if (!data) return;
 		dispatch(importConfig(Object.assign({ Content: config.Content, Title: config.Title }, data)));
 		dispatch(pushToast({ type: 'success', text: '已加载预设「' + name + '」。' }));
 	}
 
 	function onDeletePreset(name) {
-		setPresets(Z.Config.deletePreset(name));
+		setPresets(deletePreset(name));
 		dispatch(pushToast({ type: 'success', text: '已删除预设「' + name + '」。' }));
 	}
 
@@ -434,11 +434,11 @@ function PresetGroup() {
 		var next = renameValue.trim();
 		cancelRename();
 		if (!next || next === name) return;
-		if (Z.Config.loadPresets()[next]) {
+		if (loadPresets()[next]) {
 			setHint('已存在同名预设「' + next + '」。');
 			return;
 		}
-		setPresets(Z.Config.renamePreset(name, next));
+		setPresets(renamePreset(name, next));
 		dispatch(pushToast({ type: 'success', text: '已重命名预设「' + name + '」→「' + next + '」。' }));
 	}
 
@@ -499,15 +499,15 @@ function ResourceModeGroup() {
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
 
+	/* 状态行按当前资源模式刷新（模式切换由 App 订阅统一处理） */
 	useEffect(function () {
-		if (window.Zitie && window.Zitie.Assets) window.Zitie.Assets.renderStatus();
-	}, []);
+		renderAssetStatus();
+	}, [config.ResourceMode]);
 
 	function pick(value) {
 		if (value === config.ResourceMode) return;
+		/* 资源模式同步由 App 订阅 config.ResourceMode 统一处理（setResourceMode + applyAssets） */
 		dispatch(setField({ key: 'ResourceMode', value: value }));
-		/* store.subscribe 已同步 Config.ResourceMode；重新加载并刷新状态行 */
-		if (window.Zitie && window.Zitie.Assets) window.Zitie.Assets.apply();
 	}
 
 	return (
@@ -532,7 +532,7 @@ function SettingsIO() {
 	const fileRef = useRef(null);
 
 	function onExport() {
-		var blob = new Blob([JSON.stringify(Z.Config.snapshot(), null, 2)], { type: 'application/json;charset=utf-8' });
+		var blob = new Blob([JSON.stringify(snapshotConfig(config), null, 2)], { type: 'application/json;charset=utf-8' });
 		var url = URL.createObjectURL(blob);
 		var a = document.createElement('a');
 		a.href = url;
@@ -645,31 +645,19 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 	}
 
 	/* 每行格数上限 = 当前纸张 / 格子大小可容纳的列数（与 pageLayout 联约束一致，T0.5）。
-	 * 仅依赖纸张 / 边距 / 格子大小，内容变化不重算（P3-13）。 */
-	const colsMax = useMemo(function () {
-		return Math.max(1, Z.SheetLayout.compute({ cols: 0, content: '', gridRatio: config.GridRatio, config: config }).cols);
-	}, [config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left, config.GridSize, config.GridRatio]);
+	 * 内容 / 模板不影响列数，仅纸张 / 边距 / 格子大小 / 宽高比相关（hook 内全量依赖 config）。 */
+	const colsMax = Math.max(1, useSheetLayout(config, { content: '', cols: 0 }).cols);
 	const colsValue = Math.min(config.Cols, colsMax);
 	/* 实际生效列数（Cols=0 自适应时取上限），供模板缩略图画足一行 */
 	const activeCols = config.Cols === 0 ? colsMax : colsValue;
 
 	/* 内容页统计：行数（ContentModel 段落）与页数（与预览 / PDF 同一份版式真源） */
+	const layoutForStats = useSheetLayout(config);
 	const contentStats = useMemo(function () {
-		var blocks = Z.ContentModel.parse(config.Content).blocks;
+		var blocks = ContentModel.parse(config.Content).blocks;
 		var rows = blocks.filter(function (b) { return b.type === 'row'; }).length;
-		var layout = Z.SheetLayout.compute({
-			content: config.Content,
-			title: config.Title,
-			template: config.Template,
-			traceCount: config.TraceCount,
-			cols: config.Cols,
-			rowGap: config.RowGap,
-			gridPx: config.GridSize,
-			gridRatio: config.GridRatio,
-			config: config
-		});
-		return { rows: rows, pages: layout.pages.length, gridMm: layout.gridMm };
-	}, [config.Content, config.Title, config.Template, config.TraceCount, config.Cols, config.RowGap, config.GridSize, config.GridRatio, config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left]);
+		return { rows: rows, pages: layoutForStats.pages.length, gridMm: layoutForStats.gridMm };
+	}, [config.Content, layoutForStats]);
 
 	function field(key, value) {
 		dispatch(setField({ key: key, value: value }));
@@ -695,6 +683,8 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 
 	var gridSizeLabel = contentStats.gridMm.toFixed(1) + ' mm';
 	var ratioLabel = config.GridRatio > 0 ? '×' + (config.GridRatio / 100).toFixed(2) : '自动';
+	var lineScaleLabel = '×' + (config.ZgLineScale / 100).toFixed(2);
+	var rhythmCfg = { model: config.TraceModel, trace: config.TraceTrace, decay: config.TraceDecay };
 	var pageHead = {
 		content: { title: '字帖内容', sub: '换行分段，空行分页；空格即空临格' },
 		layout: {
@@ -788,7 +778,7 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 								</div>
 								<div className="rp-tpl">
 									{TEMPLATES.map(function (t) {
-										var cells = tplCells(t.key, Math.min(activeCols, TPL_MAX_CELLS), config.TraceCount);
+										var cells = tplCells(t.key, Math.min(activeCols, TPL_MAX_CELLS), config.TraceCount, rhythmCfg);
 										return (
 											<button
 												type="button"
@@ -808,6 +798,22 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 								<label htmlFor="traceCount">描红范字数（一字三描红）</label>
 								<SchemaRange schemaKey="TraceCount" aria-valuetext={config.TraceCount + ' 格'} display={String(config.TraceCount)} />
 							</div>
+							{config.Template === 'rhythm' && (
+								<React.Fragment>
+									<div className="rp-field">
+										<label htmlFor="traceModel">每行范字（深色）</label>
+										<SchemaRange schemaKey="TraceModel" aria-valuetext={config.TraceModel + ' 格'} display={String(config.TraceModel)} />
+									</div>
+									<div className="rp-field">
+										<label htmlFor="traceTrace">每行描红（浅色）</label>
+										<SchemaRange schemaKey="TraceTrace" aria-valuetext={config.TraceTrace + ' 格'} display={String(config.TraceTrace)} />
+									</div>
+									<div className="rp-field">
+										<label htmlFor="traceDecay">逐行递减描红</label>
+										<SchemaRange schemaKey="TraceDecay" aria-valuetext={config.TraceDecay === 0 ? '不递减' : ('每行减 ' + config.TraceDecay + ' 格')} display={config.TraceDecay === 0 ? '不递减' : ('-' + config.TraceDecay)} />
+									</div>
+								</React.Fragment>
+							)}
 							<div className="rp-field">
 								<label htmlFor="cols">每行格数</label>
 								<SchemaRange schemaKey="Cols" aria-valuetext={config.Cols === 0 ? '自适应' : colsValue + ' 列'} max={colsMax} display={config.Cols === 0 ? '自适应' : String(colsValue)} />
@@ -849,7 +855,7 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 									{ZG_TYPES.map(function (type) {
 										var name = ZG_TYPE_NAMES[type] || type;
 										/* 用当前字格颜色画缩略图，与预览 / PDF 同源（Z.buildZgSvg） */
-										var icon = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(Z.buildZgSvg(type, config.ZgColor));
+										var icon = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(buildZgSvg(type, config.ZgColor, config.ZgLineScale, config.ZgLineMode));
 										return (
 											<button
 												type="button"
@@ -892,6 +898,28 @@ export function Panel({ pdfBusy, onExportPdf, onPrint }) {
 						<div className="rp-field">
 							<label htmlFor="gridRatio">宽高比</label>
 							<SchemaRange schemaKey="GridRatio" aria-valuetext={ratioLabel} display={ratioLabel} />
+						</div>
+						<div className="rp-field">
+							<label htmlFor="zgLineScale">格线粗细</label>
+							<SchemaRange schemaKey="ZgLineScale" aria-valuetext={lineScaleLabel} display={lineScaleLabel} />
+						</div>
+						<div className="rp-field">
+							<label>格线样式</label>
+							<div className="rp-tpl">
+								{ZG_LINE_MODES.map(function (m) {
+									return (
+										<button
+											type="button"
+											key={m}
+											className={config.ZgLineMode === m ? 'is-active' : ''}
+											aria-pressed={config.ZgLineMode === m}
+											onClick={function () { field('ZgLineMode', m); }}
+										>
+											{ZG_LINE_MODE_NAMES[m]}
+										</button>
+									);
+								})}
+							</div>
 						</div>
 					</Group>
 				</div>

@@ -7,7 +7,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { Zitie as Z, FontStore } from '../js/core.js';
+import * as Z from '../web/src/core/index.js';
 import { store, resetConfig, pushToast, dismissToast, setField, setContent, importConfig, setFontSource, replaceHan, resetHistory, undoContent, redoContent } from '../web/src/store.js';
 import { ToastHost } from '../web/src/ToastHost.jsx';
 import { Preview } from '../web/src/Preview.jsx';
@@ -19,15 +19,59 @@ function renderWithStore(ui) {
 	return render(React.createElement(Provider, { store }, ui));
 }
 
+/* 组件已改用 core ESM（P4）：assets / pinyin / stroke 通过 vi.mock 注入测试替身，
+ * 避免 jsdom 真实网络加载与 HanziWriter 依赖。*/
+var mockState = vi.hoisted(function () {
+	return { playCalls: 0, statusText: 'CDN 模式（测试）。' };
+});
+
+vi.mock('../web/src/core/assets.js', function () {
+	return {
+		CDN_URLS: {},
+		LOCAL_PATHS: {},
+		setResourceMode: function () {},
+		resetHanziWriter: function () {},
+		loadHanziWriter: function () { return Promise.resolve(); },
+		loadPinyinLib: function () { return Promise.resolve(); },
+		renderStatus: function () {
+			var el = document.getElementById('assetStatus');
+			if (el) el.textContent = mockState.statusText;
+		},
+		applyAssets: function () {
+			var el = document.getElementById('assetStatus');
+			if (el) el.textContent = mockState.statusText;
+		},
+		describeAssets: function () { return { mode: 'cdn', failed: [] }; }
+	};
+});
+
+vi.mock('../web/src/core/pinyin.js', function () {
+	return {
+		loadPinyin: function () { return Promise.resolve(); },
+		getPinyin: function (c) { return c === '永' ? 'yǒng' : ''; },
+		resetPinyin: function () {},
+		isPinyinReady: function () { return true; }
+	};
+});
+
+vi.mock('../web/src/core/stroke.js', function () {
+	return {
+		Stroke: {
+			play: function () { mockState.playCalls++; return false; },
+			destroy: function () {}
+		}
+	};
+});
+
 /* 本地字体仓库与字体 Face mock（jsdom 无 IndexedDB / FontFace） */
 var fontMem = {};
 var fontMeta = [];
-FontStore.available = function () { return true; };
-FontStore.put = function (entry) { fontMem[entry.id] = entry; return Promise.resolve(); };
-FontStore.get = function (id) { return Promise.resolve(fontMem[id] || null); };
-FontStore.remove = function (id) { delete fontMem[id]; return Promise.resolve(); };
-FontStore.loadMeta = function () { return fontMeta.slice(); };
-FontStore.saveMeta = function (list) { fontMeta = list.slice(); };
+Z.FontStore.available = function () { return true; };
+Z.FontStore.put = function (entry) { fontMem[entry.id] = entry; return Promise.resolve(); };
+Z.FontStore.get = function (id) { return Promise.resolve(fontMem[id] || null); };
+Z.FontStore.remove = function (id) { delete fontMem[id]; return Promise.resolve(); };
+Z.FontStore.loadMeta = function () { return fontMeta.slice(); };
+Z.FontStore.saveMeta = function (list) { fontMeta = list.slice(); };
 
 /* jsdom Blob 可能无 arrayBuffer：补一个（FileReader 实现） */
 if (typeof Blob !== 'undefined' && typeof Blob.prototype.arrayBuffer !== 'function') {
@@ -55,6 +99,7 @@ Object.defineProperty(document, 'fonts', {
 beforeEach(function () {
 	fontMem = {};
 	fontMeta = [];
+	mockState.playCalls = 0;
 	mqState.matches = false;
 	mqState.listeners = [];
 	try { window.localStorage.removeItem('zitie.fonts'); } catch (e) { /* 忽略 */ }
@@ -84,18 +129,6 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 		disconnect() {}
 	};
 }
-
-/* jsdom 无 js/assets.js：mock 资源管理，验证 P2-9 资源来源 UI */
-window.Zitie = window.Zitie || {};
-window.Zitie.Assets = window.Zitie.Assets || {
-	apply: function () {
-		if (window.Zitie.Assets.renderStatus) window.Zitie.Assets.renderStatus();
-	},
-	renderStatus: function () {
-		var el = document.getElementById('assetStatus');
-		if (el) el.textContent = 'CDN 模式（测试）。';
-	}
-};
 
 /* jsdom 无 matchMedia：可配置 matches，驱动窄屏抽屉测试（P1-4） */
 var mqState = { matches: false, listeners: [] };
@@ -151,15 +184,6 @@ describe('ToastHost', function () {
 
 describe('BigPreview', function () {
 	it('打开后显示拼音：未预载时也会加载并补显', async function () {
-		var origAssets = Z.Assets;
-		var origStroke = Z.Stroke;
-		var origLoad = Z.loadPinyin;
-		var origGet = Z.getPinyin;
-		Z.Assets = { loadHanziWriter: function () { return Promise.resolve(); } };
-		var playCalls = 0;
-		Z.Stroke = { play: function () { playCalls++; return false; }, destroy: function () {} };
-		Z.loadPinyin = function () { return Promise.resolve(); };
-		Z.getPinyin = function (c) { return c === '永' ? 'yǒng' : ''; };
 		var rendered = null;
 		try {
 			rendered = render(<BigPreview
@@ -173,27 +197,15 @@ describe('BigPreview', function () {
 			/* 字格背景铺到画布下层 */
 			expect(document.querySelector('.overlay-stage').style.backgroundImage).toContain('url(');
 			/* 默认不播笔顺（HanziWriter 字形是标准字形，与字帖字体不一致），显示当前字体静态字 */
-			expect(playCalls).toBe(0);
+			expect(mockState.playCalls).toBe(0);
 			expect(document.querySelector('.overlay-stage-char').textContent).toBe('永');
 		} finally {
 			/* 先卸载，避免 React effect cleanup 读到已恢复的 mock */
 			if (rendered) rendered.unmount();
-			Z.Assets = origAssets;
-			Z.Stroke = origStroke;
-			Z.loadPinyin = origLoad;
-			Z.getPinyin = origGet;
 		}
 	});
 
 	it('拼音格（isPy）：画布加高到 1.4×，降级单字对齐下区田字格', async function () {
-		var origAssets = Z.Assets;
-		var origStroke = Z.Stroke;
-		var origLoad = Z.loadPinyin;
-		var origGet = Z.getPinyin;
-		Z.Assets = { loadHanziWriter: function () { return Promise.resolve(); } };
-		Z.Stroke = { play: function () { return false; }, destroy: function () {} };
-		Z.loadPinyin = function () { return Promise.resolve(); };
-		Z.getPinyin = function (c) { return c === '永' ? 'yǒng' : ''; };
 		var rendered = null;
 		try {
 			rendered = render(<BigPreview
@@ -211,22 +223,10 @@ describe('BigPreview', function () {
 			expect(document.querySelector('.overlay-stage-char').textContent).toBe('永');
 		} finally {
 			if (rendered) rendered.unmount();
-			Z.Assets = origAssets;
-			Z.Stroke = origStroke;
-			Z.loadPinyin = origLoad;
-			Z.getPinyin = origGet;
 		}
 	});
 
 	it('字体位置：dx / dy 注入画布 CSS 变量（与字帖格子同源）', async function () {
-		var origAssets = Z.Assets;
-		var origStroke = Z.Stroke;
-		var origLoad = Z.loadPinyin;
-		var origGet = Z.getPinyin;
-		Z.Assets = { loadHanziWriter: function () { return Promise.resolve(); } };
-		Z.Stroke = { play: function () { return false; }, destroy: function () {} };
-		Z.loadPinyin = function () { return Promise.resolve(); };
-		Z.getPinyin = function () { return ''; };
 		var rendered = null;
 		try {
 			rendered = render(<BigPreview
@@ -241,10 +241,6 @@ describe('BigPreview', function () {
 			expect(stage.style.getPropertyValue('--char-dy')).toBe('-0.1');
 		} finally {
 			if (rendered) rendered.unmount();
-			Z.Assets = origAssets;
-			Z.Stroke = origStroke;
-			Z.loadPinyin = origLoad;
-			Z.getPinyin = origGet;
 		}
 	});
 });
@@ -417,12 +413,6 @@ describe('Preview', function () {
 
 	it('双击字格打开放大预览，并取消待定单击编辑（P3-18）', function () {
 		vi.useFakeTimers();
-		/* jsdom 无 assets.js / pinyin.js：临时 mock，退出时先卸载再恢复 */
-		var origGet = Z.getPinyin, origLoad = Z.loadPinyin, origAssets = Z.Assets, origStroke = Z.Stroke;
-		Z.getPinyin = function () { return ''; };
-		Z.loadPinyin = function () { return Promise.resolve(); };
-		Z.Assets = { loadHanziWriter: function () { return Promise.resolve(); } };
-		Z.Stroke = { play: function () { return false; }, destroy: function () {} };
 		var rendered = null;
 		try {
 			act(function () {
@@ -441,7 +431,6 @@ describe('Preview', function () {
 			expect(document.querySelector('.overlay-stage')).toBeTruthy();
 		} finally {
 			if (rendered) rendered.unmount();
-			Z.getPinyin = origGet; Z.loadPinyin = origLoad; Z.Assets = origAssets; Z.Stroke = origStroke;
 		}
 	});
 
@@ -496,6 +485,44 @@ describe('Preview', function () {
 		expect(Number(content2.style.getPropertyValue('--cell-ratio'))).toBeCloseTo(1.2, 9);
 		/* 行距 = 行盒高（格宽 × 宽高比）× 配置倍率 → --row-gap 随宽高比放大 */
 		expect(Number(content2.style.getPropertyValue('--row-gap'))).toBeCloseTo(0.144, 9);
+	});
+
+	it('节奏描红：Template=rhythm 按范字/描红/临写分布，且逐行递减', function () {
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		act(function () {
+			store.dispatch(setContent('永永不不是是\n永永不不是是'));
+			store.dispatch(setField({ key: 'Template', value: 'rhythm' }));
+			store.dispatch(setField({ key: 'TraceModel', value: 1 }));
+			store.dispatch(setField({ key: 'TraceTrace', value: 2 }));
+			store.dispatch(setField({ key: 'TraceDecay', value: 1 }));
+		});
+		var rows = rendered.container.querySelectorAll('.rows .row');
+		function roles(row) {
+			return Array.prototype.map.call(row.querySelectorAll('.hz-line'), function (el) {
+				var m = el.className.match(/is-(model|trace|blank)/);
+				return m ? m[1] : '';
+			});
+		}
+		/* 第 1 行：1 范 + 2 描 + 其余临写 */
+		expect(roles(rows[0]).slice(0, 4)).toEqual(['model', 'trace', 'trace', 'blank']);
+		/* 第 2 行：描红递减 1 → 1 范 + 1 描 + 临写 */
+		expect(roles(rows[1]).slice(0, 3)).toEqual(['model', 'trace', 'blank']);
+	});
+
+	it('字格页：格线粗细 / 样式控件存在并生效', function () {
+		var rendered = renderWithStore(<Panel />);
+		act(function () { rendered.container.querySelector('button[data-page="grid"]').click(); });
+		expect(document.getElementById('zgLineScale')).toBeTruthy();
+		var modes = Array.prototype.map.call(rendered.container.querySelectorAll('.rp-field .rp-tpl button'), function (b) { return b.textContent; });
+		expect(modes).toEqual(expect.arrayContaining(['实线', '虚线', '无框']));
+		/* 切换虚线外框 → 字格缩略图背景含 stroke-dasharray（与预览 / PDF 同源） */
+		act(function () {
+			var btn = Array.prototype.find.call(rendered.container.querySelectorAll('.rp-field .rp-tpl button'), function (b) { return b.textContent === '虚线'; });
+			btn.click();
+		});
+		expect(store.getState().config.ZgLineMode).toBe('dashed');
+		var icon = rendered.container.querySelector('.rp-zg-icon');
+		expect(icon.style.backgroundImage).toContain('stroke-dasharray');
 	});
 
 	it('垂直对齐：.rows 按配置切换 is-top / is-bottom（默认居中无修饰 class）', function () {
@@ -886,15 +913,15 @@ describe('Preview', function () {
 	});
 
 	it('本地字体：存储不可用时降级提示', function () {
-		var orig = FontStore.available;
-		FontStore.available = function () { return false; };
+		var orig = Z.FontStore.available;
+		Z.FontStore.available = function () { return false; };
 		try {
 			renderWithStore(<Panel />);
 			openPanelPage('文字');
 			expect(screen.getByText(/不支持本地字体存储/)).toBeTruthy();
 			expect(document.querySelector('input[type="file"][accept*="ttf"]')).toBeNull();
 		} finally {
-			FontStore.available = orig;
+			Z.FontStore.available = orig;
 		}
 	});
 

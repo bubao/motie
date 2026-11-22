@@ -8,20 +8,24 @@
 
 ## 共享核心
 
-`js/config.js`（配置读写、模板/颜色常量、字体清洗）、`js/content.js`（内容解析 / 分页 / 模板角色）、`js/zg-bg.js`（字格 SVG，7 种样式）、`js/sheet-layout.js`（版式真源：折行 / 分页 / 标题占位）是框架无关代码；`js/core.js` 是 ESM 命名导出层，供完整版 `import`，练字版由构建打包内联（`lite-src/main.js` 顶部 import）——两版共用内容解析、字格渲染与字体加载实现；练字版固定整页描红，不使用模板 / 拼音 / 颜色相关逻辑。
+标准版核心全部在 `web/src/core/`（纯逻辑 ESM，无全局命名空间）：`config.js`（配置读写、模板/颜色常量、字体清洗）、`content.js`（内容解析 / 分页 / 模板角色）、`zg-bg.js`（字格 SVG，7 种样式）、`sheet-layout.js`（版式真源：折行 / 分页 / 标题占位）、`font-store.js` / `font.js`（字体仓库与注入）、`assets.js`（HanziWriter / 拼音的 CDN 与本地 vendor 来源管理）、`pinyin.js`（拼音标注）、`stroke.js`（笔顺动画封装）、`pdf.js`（A4 PDF 导出）。组件与 hooks 一律通过 `web/src/core/index.js` 显式 `import`。
 
-**排版模板**由 `Z.SheetLayout.compute()` 统一计算，屏幕预览（`web/src/Preview.jsx`）、PDF 导出（`js/pdf.js`）与打印（`css/main.css` 的 `@media print`）三处同源。
+练字版不引用 `web/src/core/`，而是在 `lite-src/vendor/` 保留四个独立副本（config / content / zg-bg / font），由 `lite-src/main.js` 顶部 import；两版共用内容解析、字格渲染与字体加载实现，练字版固定整页描红，不使用模板 / 拼音 / 颜色相关逻辑。
+
+**排版模板**由 `SheetLayout.compute()` 统一计算，屏幕预览（`web/src/Preview.jsx`）、PDF 导出（`web/src/core/pdf.js`）与打印（`css/main.css` 的 `@media print`）三处同源。
 
 ## 模块清单
 
-- `js/config.js`：常量、默认值、模板/颜色定义与 localStorage 配置读写
-- `js/content.js`：内容模型（换行分段、空行分页、页数估算）与排版模板角色
-- `js/sheet-layout.js`：版式真源（`Z.SheetLayout.compute()`）
-- `js/assets.js`：HanziWriter / 拼音的 CDN 与本地 vendor 来源管理（按需注入）
-- `js/zg-bg.js`：字格 SVG 背景生成与缓存
-- `js/pinyin.js`：拼音标注与状态提示
-- `js/stroke.js`：笔顺动画封装（HanziWriter 按需注入与降级）
-- `js/pdf.js`：A4 PDF 导出（jsPDF 由完整版构建时编译绑定，经 `Z.Pdf.setJsPdf` 注入）
+- `web/src/core/config.js`：常量、默认值、模板/颜色定义与 localStorage 配置读写（`loadConfig` / `saveConfig` / 预设函数）
+- `web/src/core/content.js`：内容模型（换行分段、空行分页、页数估算）与排版模板角色
+- `web/src/core/sheet-layout.js`：版式真源（`SheetLayout.compute()`）
+- `web/src/core/zg-bg.js`：字格 SVG 背景生成与缓存
+- `web/src/core/font-store.js` / `font.js`：本地字体仓库（IndexedDB）与三种来源注入
+- `web/src/core/assets.js`：HanziWriter / 拼音的 CDN 与本地 vendor 来源管理（按需注入）
+- `web/src/core/pinyin.js`：拼音标注与状态
+- `web/src/core/stroke.js`：笔顺动画封装（HanziWriter 按需注入与降级）
+- `web/src/core/pdf.js`：A4 PDF 导出（jsPDF 构建时编译绑定，经 `initPdf` 注入）
+- `web/src/hooks/useSheetLayout.js` / `useZgBackground.js`：版式与字格背景的 React 封装
 
 ## 第三方库
 
@@ -39,15 +43,18 @@ jsPDF 2.5.1（npm，编译绑定进完整版产物）、HanziWriter 2.2.2（笔�
 zitie/
 ├── web/              # 完整版源码（React + Redux，Vite root）
 │   ├── index.html    # 入口（内联浏览器检测，老设备自动跳练字版）
-│   └── src/          # main.jsx / App.jsx / Panel.jsx / Preview.jsx / BigPreview.jsx / store.js / styles.css
+│   └── src/
+│       ├── core/     # 纯逻辑 ESM 核心（config / content / sheet-layout / zg-bg / font / assets / pinyin / stroke / pdf）
+│       ├── hooks/    # useSheetLayout / useZgBackground
+│       └── *.jsx      # main.jsx / App.jsx / Panel.jsx / Preview.jsx / BigPreview.jsx / store.js / styles.css
 ├── css/main.css      # 字格 / 分页 / 打印样式（两版共用）
-├── js/               # 共享核心（classic script + core.js ESM 层）
 ├── dist/             # 完整版构建产物（单文件；核心离线，拼音 / 笔顺走 CDN；gitignore）
 ├── dist-react/       # 完整版多文件产物（gitignore）
 ├── lite/             # 练字版构建产物（gitignore）
 │   └── index.html    # 单文件（离线可用）
 ├── lite-src/         # 练字版源码（构建输入）
-│   ├── main.js       # ES5 主逻辑（import 共享核心）
+│   ├── main.js       # ES5 主逻辑（import ./vendor/ 独立副本）
+│   ├── vendor/       # 与 web/src/core 同源的四个独立副本（config / content / zg-bg / font）
 │   ├── style.css
 │   └── template.html
 ├── tools/
