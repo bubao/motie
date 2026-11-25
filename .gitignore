@@ -127,7 +127,7 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+# （此处原有 dist 规则已移除：dist 产物目录由文末自定义规则精确控制，保留 .gitkeep 供 embed）
 
 # Gatsby files
 .cache/
@@ -199,9 +199,11 @@ dist
 # Custom rules (everything added below won't be overriden by 'Generate .gitignore File' if you use 'Update' option)
 
 /font/
-/lite
+/lite/*
+!/lite/.gitkeep
 /vendor
-/dist
+/dist/*
+!/dist/.gitkeep
 /dist-react
 .tmp-*
 ### Go ###

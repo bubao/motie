@@ -1,0 +1,2 @@
+# lite 精简版构建产物目录（npm run build 生成单文件）；
+# 保留占位文件以满足 main.go 的 //go:embed all:lite 约束。
