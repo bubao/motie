@@ -118,6 +118,10 @@ jobs:
         with:
           install-only: true
 
+      - name: Install frontend deps
+        # before hooks 会跑 npm run build（tools/build-lite.js 需要 esbuild）
+        run: npm ci
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
