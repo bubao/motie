@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import * as Z from '../web/src/core/index.js';
-import { store, resetConfig, pushToast, dismissToast, setField, setContent, importConfig, setFontSource, replaceHan, resetHistory, undoContent, redoContent } from '../web/src/store.js';
+import { store, resetConfig, pushToast, dismissToast, setField, setContent, importConfig, setFontSource, replaceHan, resetHistory, undoContent, redoContent, switchMode, applyFields } from '../web/src/store.js';
 import { ToastHost } from '../web/src/ToastHost.jsx';
 import { Preview } from '../web/src/Preview.jsx';
 import { BigPreview } from '../web/src/BigPreview.jsx';
@@ -19,7 +19,7 @@ function renderWithStore(ui) {
 	return render(React.createElement(Provider, { store }, ui));
 }
 
-/* 组件已改用 core ESM（P4）：assets / pinyin / stroke 通过 vi.mock 注入测试替身，
+/* 组件已改用 core ESM（P4）：assets / pinyin / stroke-order 通过 vi.mock 注入测试替身，
  * 避免 jsdom 真实网络加载与 HanziWriter 依赖。*/
 var mockState = vi.hoisted(function () {
 	return { playCalls: 0, statusText: 'CDN 模式（测试）。' };
@@ -54,7 +54,7 @@ vi.mock('../web/src/core/pinyin.js', function () {
 	};
 });
 
-vi.mock('../web/src/core/stroke.js', function () {
+vi.mock('../web/src/core/stroke-order.js', function () {
 	return {
 		Stroke: {
 			play: function () { mockState.playCalls++; return false; },
@@ -267,6 +267,59 @@ describe('Preview', function () {
 		});
 		expect(container.querySelectorAll('.hz-line.is-trace').length).toBeGreaterThan(0);
 		expect(container.querySelectorAll('.hz-line.is-model').length).toBe(0);
+	});
+
+	it('预览缩放条：默认「适应」，手动 +/− 接管，点「适应」恢复', function () {
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var container = rendered.container;
+		var pctEl = container.querySelector('.rp-zoom-pct');
+		var fitBtn = container.querySelector('.rp-zoom-fit');
+		var num = function () { return parseInt(pctEl.textContent, 10); };
+		var fitPct = num();
+		expect(fitBtn.classList.contains('is-active')).toBe(true);
+
+		/* 放大一档：百分比 +10，纸张 transform 同步，退出「适应」高亮 */
+		fireEvent.click(container.querySelector('.rp-zoom-btn[aria-label="放大"]'));
+		expect(num()).toBe(fitPct + 10);
+		expect(fitBtn.classList.contains('is-active')).toBe(false);
+		expect(container.querySelector('.rp-page-sheet').style.transform).toBe('scale(' + (num() / 100) + ')');
+
+		/* 缩小一档回到原比例（仍为 manual） */
+		fireEvent.click(container.querySelector('.rp-zoom-btn[aria-label="缩小"]'));
+		expect(num()).toBe(fitPct);
+		expect(fitBtn.classList.contains('is-active')).toBe(false);
+
+		/* 适应：重新高亮，比例按当前视口重算 */
+		fireEvent.click(fitBtn);
+		expect(fitBtn.classList.contains('is-active')).toBe(true);
+		expect(num()).toBe(fitPct);
+
+		/* 边界：连续缩小到 30% 后按钮禁用 */
+		for (var i = 0; i < 10; i++) {
+			var minus = container.querySelector('.rp-zoom-btn[aria-label="缩小"]');
+			if (minus.disabled) break;
+			fireEvent.click(minus);
+		}
+		expect(num()).toBe(30);
+		expect(container.querySelector('.rp-zoom-btn[aria-label="缩小"]').disabled).toBe(true);
+	});
+
+	it('控笔序列：逐行不同图案，背景按 cell.char 取 key', function () {
+		act(function () {
+			store.dispatch(switchMode('control'));
+			store.dispatch(setContent('1\n2'));
+			store.dispatch(setField({ key: 'ControlRows', value: 0 }));
+		});
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var rows = rendered.container.querySelectorAll('.row');
+		expect(rows.length).toBeGreaterThanOrEqual(2);
+		var first = rows[0].querySelector('.hz-line');
+		var second = rows[1].querySelector('.hz-line');
+		/* 前两行分别为横线 / 竖线剪影（逐行不同） */
+		expect(first.getAttribute('aria-label')).toContain('控笔图案 横线');
+		expect(second.getAttribute('aria-label')).toContain('控笔图案 竖线');
+		expect(first.style.backgroundImage).toContain('url(');
+		expect(first.style.backgroundImage).not.toBe(second.style.backgroundImage);
 	});
 
 	it('元信息：姓名 / 日期 / 页码按配置渲染', function () {
@@ -525,6 +578,71 @@ describe('Preview', function () {
 		expect(icon.style.backgroundImage).toContain('stroke-dasharray');
 	});
 
+	it('字格页：推荐搭配一键套用外观', function () {
+		var rendered = renderWithStore(<Panel />);
+		act(function () { rendered.container.querySelector('button[data-page="grid"]').click(); });
+		var chips = Array.prototype.map.call(rendered.container.querySelectorAll('.rp-scheme-btn'), function (b) { return b.textContent; });
+		expect(chips).toEqual(['低年级', '英语本', '毛笔隶书']);
+		act(function () { rendered.container.querySelectorAll('.rp-scheme-btn')[1].click(); });
+		var cfg = store.getState().config;
+		expect(cfg.ZgType).toBe('9');           /* 英语本 → 四线格 */
+		expect(cfg.ZgInnerLineMode).toBe('dashed');
+		expect(cfg.ZgOpacity).toBe(100);        /* 不覆盖用户已有颜色类字段之外的配色 */
+	});
+
+	it('字格页：条件参数滑杆随格型出现并生效', function () {
+		var rendered = renderWithStore(<Panel />);
+		act(function () { rendered.container.querySelector('button[data-page="grid"]').click(); });
+		/* 默认「米字回字」→ 内框边距可见 */
+		expect(document.getElementById('zgInnerRatio')).toBeTruthy();
+		fireEvent.change(document.getElementById('zgInnerRatio'), { target: { value: '40' } });
+		expect(store.getState().config.ZgInnerRatio).toBe(40);
+		/* 切到英文四线格 → 中间区高度可见、内框边距隐藏 */
+		fireEvent.click(screen.getByRole('button', { name: '英文四线格' }));
+		expect(store.getState().config.ZgType).toBe('9');
+		expect(document.getElementById('zgEngMid')).toBeTruthy();
+		expect(document.getElementById('zgInnerRatio')).toBeFalsy();
+		/* 切回田字格 → 起笔点标记可见且可勾选 */
+		fireEvent.click(screen.getByRole('button', { name: '田字格' }));
+		var dot = document.getElementById('zgStartDot');
+		expect(dot).toBeTruthy();
+		fireEvent.click(dot);
+		expect(store.getState().config.ZgStartDot).toBe(true);
+		/* 拼音格不显示起笔点 */
+		fireEvent.click(screen.getByRole('button', { name: '拼音格' }));
+		expect(document.getElementById('zgStartDot')).toBeFalsy();
+	});
+
+	it('字格页：线端样式 / 点划线 / 细线锐利控件生效', function () {
+		var rendered = renderWithStore(<Panel />);
+		act(function () { rendered.container.querySelector('button[data-page="grid"]').click(); });
+		var tplTexts = Array.prototype.map.call(rendered.container.querySelectorAll('.rp-field .rp-tpl button'), function (b) { return b.textContent; });
+		expect(tplTexts).toEqual(expect.arrayContaining(['划线', '圆点', '点划线']));
+		expect(tplTexts).toEqual(expect.arrayContaining(['平头', '圆头', '方头']));
+		fireEvent.click(screen.getByRole('button', { name: '方头' }));
+		expect(store.getState().config.ZgLineCap).toBe('square');
+		fireEvent.click(screen.getByRole('button', { name: '点划线' }));
+		expect(store.getState().config.ZgDashStyle).toBe('dashdot');
+		fireEvent.click(document.getElementById('zgCrisp'));
+		expect(store.getState().config.ZgCrisp).toBe(true);
+	});
+
+	it('字格页：恢复默认外观重置 grid 组', function () {
+		var rendered = renderWithStore(<Panel />);
+		act(function () { rendered.container.querySelector('button[data-page="grid"]').click(); });
+		act(function () {
+			store.dispatch(setField({ key: 'ZgType', value: '9' }));
+			store.dispatch(setField({ key: 'ZgColor', value: '3' }));
+			store.dispatch(setField({ key: 'ZgLineScale', value: 200 }));
+		});
+		fireEvent.click(screen.getByRole('button', { name: '恢复默认外观' }));
+		var cfg = store.getState().config;
+		expect(cfg.ZgType).toBe('3');
+		expect(cfg.ZgColor).toBe('1');
+		expect(cfg.ZgLineScale).toBe(100);
+		expect(cfg.ZgStartDot).toBe(false);
+	});
+
 	it('垂直对齐：.rows 按配置切换 is-top / is-bottom（默认居中无修饰 class）', function () {
 		var rendered = renderWithStore(<Preview pinyinReady={false} />);
 		var rows = rendered.container.querySelector('.page-block .rows');
@@ -609,11 +727,11 @@ describe('Preview', function () {
 		it('undo/redo：入栈 / 新分支清空 redo / 边界', function () {
 			act(function () { store.dispatch(setContent('甲')); });
 			act(function () { store.dispatch(setContent('乙')); });
-			expect(store.getState().config.history.past).toEqual(['永', '甲']);
+			expect(store.getState().config.history.past.map(function (s) { return s.Content; })).toEqual(['永', '甲']);
 			expect(store.getState().config.history.future).toEqual([]);
 			expect(undoContent()).toBe(true);
 			expect(store.getState().config.Content).toBe('甲');
-			expect(store.getState().config.history.future).toEqual(['乙']);
+			expect(store.getState().config.history.future.map(function (s) { return s.Content; })).toEqual(['乙']);
 			expect(redoContent()).toBe(true);
 			expect(store.getState().config.Content).toBe('乙');
 			/* 新变更清空 redo 栈 */
@@ -635,6 +753,29 @@ describe('Preview', function () {
 				act(function () { store.dispatch(setContent(v)); });
 			}
 			expect(store.getState().config.history.past.length).toBe(100);
+		});
+
+		it('undo/redo：切换类型后 Ctrl+Z 整体回退 Mode / 版式 / 内容（P0-2）', function () {
+			act(function () { store.dispatch(setContent('甲乙')); });
+			act(function () { store.dispatch(setField({ key: 'Template', value: 'trace' })); });
+			act(function () { store.dispatch(switchMode('number')); });
+			expect(store.getState().config.Mode).toBe('number');
+			expect(store.getState().config.ZgType).toBe('7'); /* 推荐数字格 */
+			act(function () { store.dispatch(setContent('0123')); });
+			/* 第一次撤销：回到切类型时的 number 初始态（内容为空、模式仍 number） */
+			expect(undoContent()).toBe(true);
+			expect(store.getState().config.Content).toBe('');
+			expect(store.getState().config.Mode).toBe('number');
+			/* 第二次撤销：跨类型整体回退到汉字 + 描红模板 + 内容甲乙 */
+			expect(undoContent()).toBe(true);
+			expect(store.getState().config.Mode).toBe('hanzi');
+			expect(store.getState().config.Template).toBe('trace');
+			expect(store.getState().config.Content).toBe('甲乙');
+			/* redo 可重放到 number 输入态 */
+			expect(redoContent()).toBe(true);
+			expect(redoContent()).toBe(true);
+			expect(store.getState().config.Mode).toBe('number');
+			expect(store.getState().config.Content).toBe('0123');
 		});
 
 		it('undo/redo：导入 / 单字编辑 / 重置均可撤销', function () {
@@ -675,10 +816,103 @@ describe('Preview', function () {
 				window.dispatchEvent(ev);
 			});
 			expect(store.getState().config.Content).toBe('本地');
+	});
+});
+
+describe('字帖类型 tab（P0-1 / P1-3 / P2-6 / P2-7）', function () {
+	it('切换类型：各类型独立记忆内容与版式，首次进入用推荐默认', function () {
+		vi.useFakeTimers();
+		act(function () {
+			store.dispatch(setContent('甲乙'));
+			store.dispatch(setField({ key: 'Template', value: 'trace' }));
+			store.dispatch(setField({ key: 'ZgType', value: '3' }));
 		});
+		/* 首次切到英文：推荐默认（田字格、空内容、normal），不继承汉字侧 */
+		act(function () { store.dispatch(switchMode('english')); });
+		expect(store.getState().config.Mode).toBe('english');
+		expect(store.getState().config.ZgType).toBe('1');
+		expect(store.getState().config.Content).toBe('');
+		expect(store.getState().config.Template).toBe('normal');
+		act(function () {
+			store.dispatch(setContent('Hello World'));
+			store.dispatch(setField({ key: 'Template', value: 'trace3' }));
+		});
+		/* 切回汉字：恢复切换前的内容 + 描红 + 米回格 */
+		act(function () { store.dispatch(switchMode('hanzi')); });
+		expect(store.getState().config.Content).toBe('甲乙');
+		expect(store.getState().config.Template).toBe('trace');
+		expect(store.getState().config.ZgType).toBe('3');
+		/* 再切回英文：恢复英文侧记忆 */
+		act(function () { store.dispatch(switchMode('english')); });
+		expect(store.getState().config.Content).toBe('Hello World');
+		expect(store.getState().config.Template).toBe('trace3');
+		/* 入库快照随 zitie.config 主链（防抖落盘） */
+		expect(store.getState().config.ModeStates.hanzi.Content).toBe('甲乙');
+		expect(store.getState().config.ModeStates.english.Content).toBe('Hello World');
+		act(function () { vi.advanceTimersByTime(200); });
+		var saved = JSON.parse(window.localStorage.getItem('zitie.config') || '{}');
+		expect(saved.Mode).toBe('english');
+		expect(saved.ModeStates.hanzi.Content).toBe('甲乙');
+		expect(saved.ModeStates.english.Content).toBe('Hello World');
 	});
 
-	describe('Panel', function () {
+	it('控笔练习行数可撤销（ControlRows 纳入类型快照，P1-3）', function () {
+		act(function () { store.dispatch(switchMode('control')); });
+		act(function () { store.dispatch(setField({ key: 'ControlRows', value: 3 })); });
+		act(function () { store.dispatch(setField({ key: 'ControlRows', value: 5 })); });
+		expect(store.getState().config.ControlRows).toBe(5);
+		/* Ctrl+Z 逐步回退：5 行 → 3 行 → 0 行（仍为控笔）→ 切换前的汉字 */
+		expect(undoContent()).toBe(true);
+		expect(store.getState().config.Mode).toBe('control');
+		expect(store.getState().config.ControlRows).toBe(3);
+		expect(undoContent()).toBe(true);
+		expect(store.getState().config.Mode).toBe('control');
+		expect(store.getState().config.ControlRows).toBe(0);
+		expect(undoContent()).toBe(true);
+		expect(store.getState().config.Mode).toBe('hanzi');
+		expect(store.getState().config.ControlRows).toBe(0);
+		/* redo 重放：控笔 0 行 → 3 行 */
+		expect(redoContent()).toBe(true);
+		expect(store.getState().config.Mode).toBe('control');
+		expect(store.getState().config.ControlRows).toBe(0);
+		expect(redoContent()).toBe(true);
+		expect(store.getState().config.ControlRows).toBe(3);
+	});
+
+	it('tab 无障碍：aria 关联 + roving tabindex；左右方向键切换并聚焦（P2-6）', function () {
+		var rendered = renderWithStore(<Panel />);
+		var tabs = Array.prototype.slice.call(rendered.container.querySelectorAll('[role="tab"]'));
+		expect(tabs.length).toBe(Z.MODES.length);
+		var current = tabs.filter(function (t) { return t.getAttribute('aria-selected') === 'true'; })[0];
+		expect(current.tabIndex).toBe(0);
+		tabs.filter(function (t) { return t !== current; }).forEach(function (t) { expect(t.tabIndex).toBe(-1); });
+		/* tabpanel 与当前 tab 互相关联 */
+		var panel = rendered.container.querySelector('[role="tabpanel"]');
+		expect(panel.id).toBe('zitie-tabpanel-' + store.getState().config.Mode);
+		expect(current.getAttribute('aria-controls')).toBe(panel.id);
+		expect(panel.getAttribute('aria-labelledby')).toBe(current.id);
+		/* ArrowRight：切换到笔画并聚焦目标 tab（roving tabindex 跟随） */
+		fireEvent.keyDown(rendered.container.querySelector('[role="tablist"]'), { key: 'ArrowRight' });
+		expect(store.getState().config.Mode).toBe('stroke');
+		var strokeTab = document.getElementById('zitie-tab-stroke');
+		expect(strokeTab.getAttribute('aria-selected')).toBe('true');
+		expect(document.activeElement).toBe(strokeTab);
+		/* End / Home：跳到末个 / 首个 */
+		fireEvent.keyDown(rendered.container.querySelector('[role="tablist"]'), { key: 'End' });
+		expect(store.getState().config.Mode).toBe('control');
+		fireEvent.keyDown(rendered.container.querySelector('[role="tablist"]'), { key: 'Home' });
+		expect(store.getState().config.Mode).toBe('hanzi');
+	});
+
+	it('英文模式统计标题为「字母统计」（P2-7）', function () {
+		act(function () { store.dispatch(switchMode('english')); });
+		renderWithStore(<Panel />);
+		expect(screen.getByText(/字母统计/)).toBeTruthy();
+		expect(screen.queryByText(/重复字统计/)).toBeNull();
+	});
+});
+
+describe('Panel', function () {
 	/* rail 分类切换：默认「内容」页，其余控件需先切到对应分类页 */
 	function openPanelPage(name) {
 		fireEvent.click(screen.getByRole('button', { name: name }));
@@ -985,6 +1219,43 @@ describe('Preview', function () {
 			expect(el.type).toBe('range');
 		});
 	});
+
+	it('控笔面板：全部纯图形图案按钮 + 练习行数上限 200（P：控笔扩充）', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('tab', { name: '控笔' }));
+		var btns = document.querySelectorAll('.rp-pattern-btn');
+		expect(btns.length).toBe(Z.CONTROL_PATTERN_KEYS.length);
+		var names = [];
+		btns.forEach(function (btn) {
+			/* 纯图形：图形字符以 aria-hidden 角标呈现（不参与朗读） */
+			expect(btn.querySelector('svg path')).toBeTruthy();
+			var alias = btn.querySelector('.rp-pattern-alias');
+			expect(alias).toBeTruthy();
+			expect(alias.getAttribute('aria-hidden')).toBe('true');
+			expect(btn.getAttribute('aria-label')).toBeTruthy();
+			names.push(btn.getAttribute('aria-label'));
+		});
+		/* 名称齐全且不重复 */
+		expect(new Set(names).size).toBe(Z.CONTROL_PATTERN_KEYS.length);
+		/* 默认选中横线；点击「方框」写入 store 并切换选中态 */
+		expect(store.getState().config.ControlPattern).toBe('line-h');
+		var square = Array.prototype.filter.call(btns, function (b) { return b.getAttribute('aria-label') === '方框'; })[0];
+		fireEvent.click(square);
+		expect(store.getState().config.ControlPattern).toBe('square');
+		expect(square.className).toContain('is-active');
+		/* 练习行数输入 max=200，超限夹取到 200 */
+		var rows = document.getElementById('controlRows');
+		expect(rows.max).toBe('200');
+		fireEvent.change(rows, { target: { value: '999' } });
+		expect(store.getState().config.ControlRows).toBe(200);
+		fireEvent.change(rows, { target: { value: '25' } });
+		expect(store.getState().config.ControlRows).toBe(25);
+		/* 图形序列：写入 Content（供 content.js 逐行解析为图案） */
+		var seq = document.getElementById('controlSeq');
+		expect(seq).toBeTruthy();
+		fireEvent.change(seq, { target: { value: '123' } });
+		expect(store.getState().config.Content).toBe('123');
+	});
 });
 
 describe('importConfig', function () {
@@ -1136,27 +1407,64 @@ describe('预设范围（P2-8）', function () {
 });
 
 describe('无障碍（P2-10）', function () {
-	it('字格色板有可访问名与按下态', function () {
+	it('字格色板有可访问名与按下态，取色器可单独调色', function () {
 		renderWithStore(<Panel />);
 		fireEvent.click(screen.getByRole('button', { name: '字格' }));
-		var green = screen.getByRole('button', { name: '绿色' });
-		expect(green.getAttribute('aria-label')).toBe('绿色');
+		/* 内部线 / 外框两行色板：aria-label 带行前缀 */
+		var green = screen.getByRole('button', { name: '内部线预设色 绿色' });
 		expect(green.getAttribute('aria-pressed')).toBe('true');
-		fireEvent.click(screen.getByRole('button', { name: '红色' }));
+		var red = screen.getByRole('button', { name: '内部线预设色 红色' });
+		fireEvent.click(red);
 		expect(store.getState().config.ZgColor).toBe('3');
-		expect(screen.getByRole('button', { name: '红色' }).getAttribute('aria-pressed')).toBe('true');
-		expect(screen.getByRole('button', { name: '绿色' }).getAttribute('aria-pressed')).toBe('false');
+		expect(store.getState().config.ZgLineColor).toBe('#bb3442');
+		expect(screen.getByRole('button', { name: '内部线预设色 红色' }).getAttribute('aria-pressed')).toBe('true');
+		expect(screen.getByRole('button', { name: '内部线预设色 绿色' }).getAttribute('aria-pressed')).toBe('false');
+		/* 原生取色器：单独改外框色不影响内部线 */
+		var picker = screen.getByLabelText('外框自定义颜色');
+		fireEvent.change(picker, { target: { value: '#0000ff' } });
+		expect(store.getState().config.ZgBorderColor).toBe('#0000ff');
+		expect(store.getState().config.ZgLineColor).toBe('#bb3442');
+	});
+
+	it('字格页：格线组控件（内外线型 / 粗细 / 虚线）存在并生效', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '字格' }));
+		/* 内部线样式切换 → 田字格缩略图不再含 dasharray */
+		var innerSolid = screen.getAllByRole('button', { name: '实线' })[1]; /* 第 1 个 = 外框样式 */
+		fireEvent.click(innerSolid);
+		expect(store.getState().config.ZgInnerLineMode).toBe('solid');
+		/* 外框粗细滑杆与虚线密度滑杆存在 */
+		expect(document.getElementById('zgBorderScale')).toBeTruthy();
+		expect(document.getElementById('zgDashDensity')).toBeTruthy();
+		/* 虚线形态切换 */
+		fireEvent.click(screen.getByRole('button', { name: '圆点' }));
+		expect(store.getState().config.ZgDashStyle).toBe('dot');
 	});
 });
 
 describe('信息架构（P2-7）', function () {
 	it('输出页含导出 PDF / 打印，导出回调生效', function () {
-		var onExport = vi.fn();
-		renderWithStore(<Panel onExportPdf={onExport} pdfBusy={false} />);
+		/* 桌面环境（内核注入标记）下导出可用；纯浏览器入口已置灰 */
+		window.__MOTIE_DESKTOP__ = true;
+		try {
+			var onExport = vi.fn();
+			renderWithStore(<Panel onExportPdf={onExport} pdfBusy={false} />);
+			fireEvent.click(screen.getByRole('button', { name: '输出' }));
+			fireEvent.click(screen.getByRole('button', { name: '导出 PDF' }));
+			expect(onExport).toHaveBeenCalledTimes(1);
+			expect(screen.getByRole('button', { name: '打印' })).toBeTruthy();
+		} finally {
+			delete window.__MOTIE_DESKTOP__;
+		}
+	});
+
+	it('非桌面环境导出 PDF 入口置灰并有提示', function () {
+		delete window.__MOTIE_DESKTOP__;
+		renderWithStore(<Panel onExportPdf={vi.fn()} pdfBusy={false} />);
 		fireEvent.click(screen.getByRole('button', { name: '输出' }));
-		fireEvent.click(screen.getByRole('button', { name: '导出 PDF' }));
-		expect(onExport).toHaveBeenCalledTimes(1);
-		expect(screen.getByRole('button', { name: '打印' })).toBeTruthy();
+		var btn = screen.getByRole('button', { name: '导出 PDF' });
+		expect(btn.disabled).toBe(true);
+		expect(btn.getAttribute('title')).toContain('仅在桌面版可用');
 	});
 
 	it('生成中导出按钮禁用', function () {
@@ -1175,5 +1483,61 @@ describe('信息架构（P2-7）', function () {
 		fireEvent.click(screen.getByRole('button', { name: '更多' }));
 		var page = document.querySelector('.rp-panel-page');
 		expect(page.firstElementChild.textContent).toContain('设置');
+	});
+});
+
+describe('笔画模式', function () {
+	it('切到笔画 tab：笔画库 17 个按钮，点击把笔画名插入内容', function () {
+		act(function () { store.dispatch(switchMode('stroke')); });
+		var rendered = renderWithStore(<Panel />);
+		var btns = rendered.container.querySelectorAll('.rp-pattern-btn.has-name');
+		expect(btns.length).toBe(Z.STROKE_LIBRARY.length);
+		act(function () { store.dispatch(setContent('竖')); });
+		fireEvent.click(btns[0]); /* 第一个是「横」 */
+		expect(store.getState().config.Content).toContain('竖');
+		expect(store.getState().config.Content).toContain('横');
+	});
+
+	it('快捷形态 chips 全局常驻（含跨模式项），当前形态高亮', function () {
+		act(function () { store.dispatch(switchMode('hanzi')); });
+		var rendered = renderWithStore(<Panel />);
+		var chips = rendered.container.querySelectorAll('.rp-scheme-btn');
+		expect(chips.length).toBe(Z.CONTENT_FORMS.length);
+		expect(Array.prototype.some.call(chips, function (c) { return c.textContent === '笔画入门'; })).toBe(true);
+	});
+
+	it('套用「笔画入门」一次切换 Mode + 版式，单步撤销', function () {
+		act(function () { store.dispatch(switchMode('hanzi')); });
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '笔画入门' }));
+		expect(store.getState().config.Mode).toBe('stroke');
+		expect(store.getState().config.Template).toBe('lead');
+		expect(store.getState().config.ZgType).toBe('3');
+		var onScreen = document.querySelector('.rp-scheme-btn.is-active');
+		expect(onScreen && onScreen.textContent).toBe('笔画入门');
+		/* 单步撤销：回到套用前（汉字） */
+		expect(undoContent()).toBe(true);
+		expect(store.getState().config.Mode).toBe('hanzi');
+	});
+
+	it('applyFields：未知字段丢弃，白名单字段批量生效', function () {
+		act(function () {
+			store.dispatch(applyFields({ fields: { Template: 'rhythm', Nope: 1 } }));
+		});
+		expect(store.getState().config.Template).toBe('rhythm');
+		expect(store.getState().config.Nope).toBeUndefined();
+	});
+
+	it('笔画格不显示文字、不可编辑', function () {
+		act(function () {
+			store.dispatch(switchMode('stroke'));
+			store.dispatch(setContent('横竖'));
+		});
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var cell = rendered.container.querySelector('.hz-line.is-model');
+		expect(cell).toBeTruthy();
+		expect(cell.textContent).toBe('');
+		fireEvent.click(cell);
+		expect(rendered.container.querySelector('.hz-edit')).toBeNull();
 	});
 });

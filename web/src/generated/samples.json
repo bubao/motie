@@ -1,0 +1,71 @@
+{
+  "Config": {
+    "Theme": "system",
+    "Template": "normal",
+    "ZgType": "3",
+    "InkColor": "cinnabar",
+    "InkAlpha": 0.62,
+    "FontWeight": "normal",
+    "FontURL": "",
+    "FontSource": {
+      "type": "default"
+    },
+    "ResourceMode": "cdn",
+    "Page": {
+      "width": 210,
+      "height": 297
+    },
+    "Margin": {
+      "top": 5,
+      "right": 16,
+      "bottom": 5,
+      "left": 16
+    },
+    "DefaultPort": 39130,
+    "BindAddr": "127.0.0.1"
+  },
+  "ConfigResponse": {
+    "config": {}
+  },
+  "FontEntry": {
+    "created_at": "",
+    "enabled": false,
+    "id": "",
+    "name": "",
+    "path": "",
+    "size": {},
+    "source": ""
+  },
+  "FontLibrary": {
+    "system": [],
+    "user": []
+  },
+  "FontSource": {
+    "id": "",
+    "type": "",
+    "url": ""
+  },
+  "Margin": {
+    "bottom": 0,
+    "left": 0,
+    "right": 0,
+    "top": 0
+  },
+  "PageSize": {
+    "height": 0,
+    "width": 0
+  },
+  "PrintRequest": {
+    "html": ""
+  },
+  "ServerMeta": {
+    "app": "",
+    "port": 0,
+    "version": ""
+  },
+  "WorkspaceFile": {
+    "content": "",
+    "mod_time": "",
+    "path": ""
+  }
+}

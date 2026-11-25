@@ -129,23 +129,51 @@ body {
 	visibility: hidden;
 }
 
+/* 格上拼音条（type10，对齐 z2h「显示拼音」）：顶部窄条写拼音，汉字居下区田字格；
+ * 条高 = 格宽 × (宽高比 − 1)，与拼音格共用 --cell-ratio 机制。 */
+.cell.has-pinyin-bar .cell-pinyin-bar {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: calc(var(--grid-size) * (var(--cell-ratio, 1.25) - 1));
+	line-height: calc(var(--grid-size) * (var(--cell-ratio, 1.25) - 1));
+	font-family: "Helvetica Neue", "Arial Unicode MS", "PingFang SC", "Microsoft YaHei", sans-serif;
+	font-size: calc(var(--grid-size) * .13);
+	letter-spacing: .02em;
+	color: var(--ink-soft);
+	print-color-adjust: exact;
+	-webkit-print-color-adjust: exact;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	user-select: none;
+}
+
+/* 拼音未就绪时保留条高，但不显示一条空白 */
+.cell.has-pinyin-bar .cell-pinyin-bar:empty {
+	visibility: hidden;
+}
+
 /* 拼音格汉字：下区 1.0×格（田字格正方形 0.4..1.4，顶边与四线末线共用），字号与其他字格一致 */
 .cell.has-pinyin .hz-line {
 	box-sizing: border-box;
 	height: calc(var(--grid-size) * var(--cell-ratio, 1.4));
 	background-size: var(--grid-size) calc(var(--grid-size) * var(--cell-ratio, 1.4));
 	padding-top: calc(var(--grid-size) * (var(--cell-ratio, 1.4) - 1));
-	font-size: calc(var(--grid-size) * .725);
+	font-size: calc(var(--grid-size) * var(--char-scale, .725));
 	line-height: calc(var(--grid-size) * 1);
 }
 
 /* 行：flex 不换行，整行居中（自适应与锁定列数都居中）。
- * 行距由 .rows 的 gap 精确控制（= 配置格倍数 × 格宽），行高不再参与行距计算。 */
+ * 行距由 .rows 的 gap 精确控制（= 配置格倍数 × 格宽），行高不再参与行距计算；
+ * 字间距由本行的 gap 控制（= 格宽 × --cell-gap，版式真源 cellGapMm / gridMm）。 */
 .row {
 	display: flex;
 	flex-wrap: nowrap;
 	justify-content: center;
 	align-items: flex-start;
+	gap: calc(var(--grid-size) * var(--cell-gap, 0));
 }
 
 /* 锁定每行格数时整体居中 */
@@ -153,6 +181,59 @@ body {
 	width: max-content;
 	margin-left: auto;
 	margin-right: auto;
+}
+
+/* 英文词单元行（B3）：格子背景整行铺满；词内字母连续（绝对定位、步距 < 1 格），
+ * 词间空 1 格。几何来自版式真源 ENGLISH_LETTER_STEP / ENGLISH_WORD_GAP，
+ * 屏幕 / 打印 / PDF 三端同源。 */
+.eng-row {
+	position: relative;
+	display: block;
+	height: calc(var(--grid-size) * var(--cell-ratio, 1));
+}
+
+.eng-grid {
+	display: flex;
+	flex-wrap: nowrap;
+	gap: calc(var(--grid-size) * var(--cell-gap, 0));
+}
+
+#printContent.is-fixed-cols .eng-grid {
+	margin-left: auto;
+	margin-right: auto;
+}
+
+.eng-cell {
+	flex: 0 0 var(--grid-size);
+	width: var(--grid-size);
+	height: calc(var(--grid-size) * var(--cell-ratio, 1));
+	background-repeat: no-repeat;
+	background-position: center;
+	background-size: var(--grid-size) calc(var(--grid-size) * var(--cell-ratio, 1));
+	print-color-adjust: exact;
+	-webkit-print-color-adjust: exact;
+}
+
+.eng-word {
+	position: absolute;
+	top: 0;
+	/* 显式跟随格高（100% 在部分缩放场景解析异常），与 .eng-cell 同高 */
+	height: calc(var(--grid-size) * var(--cell-ratio, 1));
+}
+
+/* 词内字母：绝对定位在词内步距点上，垂直居中；背景透明（格子由 .eng-cell 画）。
+ * 选择器带 .hz-line 提高优先级，覆盖 .hz-line 的 relative / 格宽 / 背景。 */
+.hz-line.eng-ch {
+	position: absolute;
+	/* 垂直居中：top 用格高显式计算（百分比在缩放层下解析不稳定），再用 translateY 修正半字高 */
+	top: calc(var(--grid-size) * var(--cell-ratio, 1) * 0.5);
+	left: 0;
+	width: auto;
+	height: auto;
+	line-height: 1;
+	white-space: nowrap;
+	background: none;
+	transform: translate(calc(var(--grid-size) * var(--char-dx, 0)), calc(-50% + var(--grid-size) * var(--char-dy, 0)));
 }
 
 /* 每页容器：版式真源按页输出，页与页之间用 .page-break 强制分页。
@@ -195,7 +276,8 @@ body {
 	width: var(--grid-size);
 	height: calc(var(--grid-size) * var(--cell-ratio, 1));
 	font-family: var(--font-kai);
-	font-size: calc(var(--grid-size) * .725);      /* 58 / 80 */
+	font-weight: var(--char-weight, 400); /* A1 字体粗细：normal 400 / bold 700，屏幕 / 打印 / PDF 同源 */
+	font-size: calc(var(--grid-size) * var(--char-scale, .725));      /* 58 / 80，默认 0.725 */
 	line-height: calc(var(--grid-size) * var(--cell-ratio, 1) * 1.0625);  /* 85 / 80，随格高缩放 */
 	text-align: center;
 	color: rgba(var(--ink-rgb), var(--ink-alpha));
@@ -208,9 +290,9 @@ body {
 	-webkit-print-color-adjust: exact;
 }
 
-/* 描红格：同色相、降低不透明度 */
+/* 描红格：颜色由 --trace-rgb / --trace-alpha 决定（A3：auto 时为同主色降透明度，指定色时独立） */
 .hz-line.is-trace {
-	color: rgba(var(--ink-rgb), calc(var(--ink-alpha) * .5));
+	color: rgba(var(--trace-rgb), var(--trace-alpha));
 }
 
 /* 字格可聚焦（键盘打开放大预览），见 Preview.jsx */
@@ -228,6 +310,25 @@ body {
 	line-height: 1;
 	color: inherit;
 	pointer-events: none;
+}
+
+/* 静态笔顺序号（B4）：每笔中点标 1..n；几何来自字形数据 medians，
+ * 由 Preview 按 CharScale 换算为格内百分比。未就绪不渲染，不阻塞。 */
+.stroke-marks {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
+.stroke-mark {
+	position: absolute;
+	transform: translate(-50%, -50%);
+	font-family: "Helvetica Neue", "Arial Unicode MS", sans-serif;
+	font-size: calc(var(--grid-size) * .16);
+	line-height: 1;
+	color: rgba(var(--ink-rgb), calc(var(--ink-alpha) * .55));
+	print-color-adjust: exact;
+	-webkit-print-color-adjust: exact;
 }
 
 /* 单字编辑（T1.10）：单击字格后覆盖输入，字体 / 颜色 / 对齐继承字格 */
@@ -327,6 +428,23 @@ body {
 	color: var(--ink-soft);
 }
 
+/* 格上拼音条的放大预览：拼音写进舞台顶部窄条（与字帖格子同形态），不另起一行 */
+.overlay-stage.is-py .overlay-pinyin-bar {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	/* 条高 = 舞台高 × (宽高比 − 1) / 宽高比 = 格宽 × (宽高比 − 1) */
+	height: calc((var(--overlay-ratio, 1.25) - 1) / var(--overlay-ratio, 1.25) * 100%);
+	line-height: calc(min(58vmin, 280px) * (var(--overlay-ratio, 1.25) - 1));
+	font-family: "Helvetica Neue", "Arial Unicode MS", "PingFang SC", sans-serif;
+	font-size: calc(min(58vmin, 280px) * .13);
+	letter-spacing: .02em;
+	text-align: center;
+	color: var(--ink-soft);
+	pointer-events: none;
+}
+
 /* 笔顺画布；加载失败时降级显示静态单字 */
 .overlay-stage {
 	position: relative;
@@ -337,7 +455,8 @@ body {
 	/* 舞台高 = 宽 × 宽高比（默认 1；拼音格 1.4，与字帖格子同源） */
 	height: calc(min(58vmin, 280px) * var(--overlay-ratio, 1));
 	font-family: var(--font-kai);
-	font-size: 200px;
+	/* 字占格比例（A2）：与字帖格子同源，默认 0.725（280 × .725 ≈ 203） */
+	font-size: calc(min(58vmin, 280px) * var(--char-scale, .725));
 	line-height: 1;
 	color: rgba(var(--ink-rgb), .88);
 }
@@ -367,6 +486,7 @@ body {
 
 .overlay-stage-char {
 	line-height: 1;
+	font-weight: var(--char-weight, 400); /* A1 字体粗细：与字帖格子同源（变量由 BigPreview 传入） */
 	/* 与字帖格子同一偏移（格倍数 × 画布格边长） */
 	transform: translate(calc(min(58vmin, 280px) * var(--char-dx, 0)), calc(min(58vmin, 280px) * var(--char-dy, 0)));
 }
@@ -424,8 +544,9 @@ body.custom-font .overlay-stage {
 		--ui-active-warm: #FDF3F2;
 	}
 
-	/* 字帖（打印）侧不显示拼音文字（字帖不显示拼音，见 T2.1）；字格背景两侧一致（上区四线 + 下区田字格） */
-	.cell.has-pinyin .cell-pinyin {
+	/* 字帖（打印）：拼音格（type5）上区不显示拼音文字（四线三格占位，见 T2.1）；
+	 * 格上拼音条（type10）遵循 z2h「显示拼音」语义，拼音随字帖输出。 */
+	.cell.has-pinyin:not(.has-pinyin-bar) .cell-pinyin {
 		display: none;
 	}
 

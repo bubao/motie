@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=墨帖
+GenericName=Font Practice Copybook
+Comment=Desktop copybook workbench for practicing Chinese calligraphy fonts
+Comment[zh_CN]=中文字帖桌面工作台
+Exec=motie %U
+Icon=motie
+Terminal=false
+Categories=Education;Utility;
+Keywords=copybook;calligraphy;font;chinese;practice;
+StartupNotify=true

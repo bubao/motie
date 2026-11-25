@@ -1,0 +1,148 @@
+# =============================================================================
+# GoReleaser 配置 — 墨帖 motie 跨平台桌面应用发布
+# 文档：https://goreleaser.com/customization/
+#
+# 覆盖范围：
+#   - Windows：GUI 子系统应用二进制 + 便携 zip（图标/清单经 syso 链入）
+#   - Linux  ：应用二进制 + tar.gz + .deb / .rpm 桌面集成包（.desktop + hicolor）
+#   - macOS  ：不在此构建——由 make app-macos 产出 Motie.app 的 zip / dmg
+#              （签名/公证流程见 scripts/package.sh）
+#
+# 用法：
+#   goreleaser release --clean --snapshot   # 本地快照试打包（不发布）
+#   goreleaser release --clean              # 正式发版（需 tag）
+# =============================================================================
+
+version: 2
+
+project_name: motie
+
+dist: .goreleaser-dist
+
+# 重新编译前端（embed 源）、生成品牌资产、Windows PE 资源与 Linux 图标
+before:
+  hooks:
+    - npm run vendor
+    - npm run build -- --vendor
+    - go run ./scripts/gen-assets.go
+    - ./scripts/gen-windows-resources.sh
+    - ./scripts/gen-linux-icons.sh
+
+builds:
+  # ---- Windows（GUI 子系统：无控制台黑框；图标/清单经 motie_windows_amd64.syso 链入）----
+  - id: motie-windows
+    binary: motie
+    main: .
+    goos:
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -H=windowsgui
+      - -X main.Version={{ .Version }}
+
+  # ---- Linux ----
+  - id: motie-linux
+    binary: motie
+    main: .
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.Version={{ .Version }}
+
+archives:
+  - id: motie
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+
+nfpms:
+  - id: motie
+    package_name: motie
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    vendor: motie
+    homepage: https://github.com/bubao/motie
+    maintainer: bubao
+    description: >-
+      墨帖（motie）——纯前端字帖工具桌面版：输入汉字实时生成可打印、
+      可导出 PDF 的字帖，并附 Kindle 黑白墨水屏精简练字版。Go 内核 +
+      各平台 WebView 壳。
+    license: Proprietary
+    formats:
+      - deb
+      - rpm
+    section: utils
+    priority: optional
+    contents:
+      - src: packaging/linux/motie.desktop
+        dst: /usr/share/applications/motie.desktop
+      - src: build/icons/hicolor/16x16/apps/motie.png
+        dst: /usr/share/icons/hicolor/16x16/apps/motie.png
+      - src: build/icons/hicolor/22x22/apps/motie.png
+        dst: /usr/share/icons/hicolor/22x22/apps/motie.png
+      - src: build/icons/hicolor/24x24/apps/motie.png
+        dst: /usr/share/icons/hicolor/24x24/apps/motie.png
+      - src: build/icons/hicolor/32x32/apps/motie.png
+        dst: /usr/share/icons/hicolor/32x32/apps/motie.png
+      - src: build/icons/hicolor/48x48/apps/motie.png
+        dst: /usr/share/icons/hicolor/48x48/apps/motie.png
+      - src: build/icons/hicolor/64x64/apps/motie.png
+        dst: /usr/share/icons/hicolor/64x64/apps/motie.png
+      - src: build/icons/hicolor/128x128/apps/motie.png
+        dst: /usr/share/icons/hicolor/128x128/apps/motie.png
+      - src: build/icons/hicolor/256x256/apps/motie.png
+        dst: /usr/share/icons/hicolor/256x256/apps/motie.png
+      - src: build/icons/hicolor/512x512/apps/motie.png
+        dst: /usr/share/icons/hicolor/512x512/apps/motie.png
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: bubao
+  draft: false
+  header: |
+    ## 下载与安装
+
+    | 平台 | 安装包 | 说明 |
+    | :--- | :--- | :--- |
+    | 🪟 Windows | `motie_*-Windows_x86_64.zip` | 便携版，解压即开（无独立安装器） |
+    | 🐧 Linux | `motie_*.deb` / `motie_*.rpm` | 系统包管理器安装，含桌面入口与图标 |
+    | 🐧 Linux | `motie_*-Linux_*.tar.gz` | 便携压缩包 |
+
+    > 🍎 macOS 安装包（Motie.app 的 zip / dmg）由 `make app-macos` 单独产出。
+    >
+    > 桌面应用会启动本地服务并自动打开独立应用窗口。
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"

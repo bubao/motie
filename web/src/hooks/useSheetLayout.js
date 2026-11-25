@@ -21,6 +21,7 @@ export function useSheetLayout(config, options) {
 	return useMemo(function () {
 		return SheetLayout.compute({
 			content: content != null ? content : config.Content,
+			mode: config.Mode,
 			title: config.Title,
 			template: config.Template,
 			traceCount: config.TraceCount,

@@ -35,8 +35,23 @@
 	Z.MAX_TRACE_TRACE = 10;
 	Z.MIN_TRACE_DECAY = 0;   /* 每行递减描红格：0 = 不变 */
 	Z.MAX_TRACE_DECAY = 5;
-	Z.MIN_ZG_LINE_SCALE = 50;   /* 格线宽倍率 ×100：×0.50 */
-	Z.MAX_ZG_LINE_SCALE = 200;  /* ×2.00 */
+	Z.MIN_ZG_LINE_SCALE = 25;   /* 内部线宽倍率 ×100：×0.25 */
+	Z.MAX_ZG_LINE_SCALE = 300;  /* ×3.00 */
+	Z.MIN_ZG_BORDER_SCALE = 0;   /* 外框宽相对内部线百分比：0 = 自动（随字格类型） */
+	Z.MAX_ZG_BORDER_SCALE = 300; /* ×3.00 */
+	Z.MIN_ZG_OPACITY = 10;       /* 格线下限不透明度 % */
+	Z.MAX_ZG_OPACITY = 100;
+	Z.MIN_ZG_DASH_DENSITY = 25;  /* 虚线密度 ×100：×0.25（密） */
+	Z.MAX_ZG_DASH_DENSITY = 200; /* ×2.00（疏） */
+	/* 格型内部比例参数（单位见各字段注释） */
+	Z.MIN_ZG_INNER_RATIO = 15;
+	Z.MAX_ZG_INNER_RATIO = 45;
+	Z.MIN_ZG_ENG_MID = 60;
+	Z.MAX_ZG_ENG_MID = 180;
+	Z.MIN_ZG_PINYIN_TOP = 20;
+	Z.MAX_ZG_PINYIN_TOP = 50;
+	Z.MIN_ZG_BASELINE_POS = 40;
+	Z.MAX_ZG_BASELINE_POS = 85;
 	Z.MIN_TRACE_COUNT = 1;
 	Z.MAX_TRACE_COUNT = 6;
 	Z.MIN_COLS = 1;
@@ -63,15 +78,29 @@
 		InkAlpha: 0.62,       /* 文字深浅 0.15–1 */
 		CharOffsetX: 0,       /* 字体在格内的水平偏移（格倍数，-0.25–0.25） */
 		CharOffsetY: 0,       /* 字体在格内的垂直偏移（格倍数） */
-		ZgType: '3',     /* 字格样式：1 田 / 2 米 / 3 米回 / 4 回 / 5 拼音 / 6 作文 / 7 数字（5–7 仅完整版） */
-		ZgColor: '1',    /* 字格颜色：1 绿 / 2 灰 / 3 红 */
+		ZgType: '3',     /* 字格样式：1 田 / 2 米 / 3 米回 / 4 回 / 5 拼音 / 6 方格 / 7 数字 / 8 井字 / 9 英文四线（5–9 仅完整版） */
+		ZgColor: '1',    /* 字格预设色：1 绿 / 2 灰 / 3 红 / 4 蓝；实际颜色取 ZgLineColor / ZgBorderColor（空则回退本预设） */
+		ZgLineColor: '',    /* 内部线颜色 #rrggbb；空 = 跟随 ZgColor 预设 line 色 */
+		ZgBorderColor: '',  /* 外框颜色 #rrggbb；空 = 跟随 ZgColor 预设 border 色 */
+		ZgOpacity: 100,     /* 格线整体不透明度 %（10–100） */
 		GridSize: 80,    /* 格子宽（px，理想值 → 决定列数，实际格宽均分铺满） */
 		GridRatio: 0,    /* 格子宽高比 ×100：0 = 自动（拼音格 1.4，其余 1.0）；60–160 = 用户值 */
 		TraceModel: 1,   /* 节奏描红：每行前 N 格范字（深） */
 		TraceTrace: 3,   /* 节奏描红：每行接着 M 格描红（浅），其余临写（空临格） */
 		TraceDecay: 0,   /* 节奏描红：每行递减的描红格数（逐行变少） */
-		ZgLineScale: 100, /* 格线宽倍率 ×100（50–200，步进 25） */
+		ZgLineScale: 100, /* 内部线宽倍率 ×100（25–300，步进 25） */
+		ZgBorderScale: 0,   /* 外框宽相对内部线的百分比：0 = 自动（拼音格 100，其余 200） */
 		ZgLineMode: 'solid', /* 格外框样式：solid 实线 / dashed 虚线 / none 无框 */
+		ZgInnerLineMode: 'dashed', /* 内部辅助线样式：solid / dashed / none */
+		ZgDashStyle: 'dash', /* 虚线形态：dash 划线 / dot 圆点 / dashdot 点划线 */
+		ZgDashDensity: 100,  /* 虚线密度 ×100（25–200，步进 25） */
+		ZgInnerRatio: 25,    /* 回字内框水平边距占格宽 %（15–45，仅 type 3/4） */
+		ZgEngMid: 100,       /* 英文格中间区占比 ×300（60–180；100 = 1/3，仅 type 9） */
+		ZgPinyinTop: 29,     /* 拼音格上区高度占整格 %（20–50，仅 type 5） */
+		ZgBaselinePos: 66,   /* 数字格基线距顶 %（40–85，仅 type 7） */
+		ZgStartDot: false,   /* 起笔点标记（仅 type 1/2/3/4/8） */
+		ZgLineCap: 'butt',   /* 线端样式：butt / round / square */
+		ZgCrisp: false,      /* 细线锐利（shape-rendering: crispEdges） */
 		ShowPinyin: true,  /* 预览在拼音格内上区显示拼音（仅 ZgType=5；字帖不显示） */
 		StrokeAnim: true,  /* 点击字格播放笔顺动画 */
 		Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
@@ -116,18 +145,27 @@
 		ochre: '169, 113, 58'
 	};
 
-	Z.ZG_TYPES = ['1', '2', '3', '4', '5', '6', '7'];
-	Z.ZG_COLORS = ['1', '2', '3'];
+	Z.ZG_TYPES = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+	Z.ZG_COLORS = ['1', '2', '3', '4'];
 
 	/* 行区垂直对齐（行距不变，只改空白分布） */
 	Z.VERTICAL_ALIGNS = ['center', 'top', 'bottom'];
 
-	/* 字格配色：虚线颜色 + 边框颜色 */
+	/* 字格配色：内部线颜色 + 外框颜色 */
 	Z.ZG_COLOR_VALUES = {
 		'1': { line: '#70d39d', border: '#00b050' }, /* 绿色 */
 		'2': { line: '#666666', border: '#111111' }, /* 灰色 */
-		'3': { line: '#bb3442', border: '#980f29' }  /* 红色 */
+		'3': { line: '#bb3442', border: '#980f29' }, /* 红色 */
+		'4': { line: '#6f9fd8', border: '#1f5aa8' }  /* 蓝色 */
 	};
+
+	/* 虚线形态：划线 / 圆点 */
+	Z.ZG_DASH_STYLES = ['dash', 'dot', 'dashdot'];
+	Z.ZG_DASH_STYLE_NAMES = { dash: '划线', dot: '圆点', dashdot: '点划线' };
+
+	/* 线端样式 */
+	Z.ZG_LINE_CAPS = ['butt', 'round', 'square'];
+	Z.ZG_LINE_CAP_NAMES = { butt: '平头', round: '圆头', square: '方头' };
 
 	Z.FONT_FORMATS = {
 		woff2: 'woff2',
@@ -184,8 +222,22 @@
 		CharOffsetY: { type: 'percent', min: Z.MIN_CHAR_OFFSET, max: Z.MAX_CHAR_OFFSET, group: 'text' },
 		ZgType:     { type: 'enum', values: Z.ZG_TYPES, group: 'grid' },
 		ZgColor:    { type: 'enum', values: Z.ZG_COLORS, group: 'grid' },
+		ZgLineColor:   { type: 'hex', group: 'grid' }, /* 空 = 跟随 ZgColor 预设 */
+		ZgBorderColor: { type: 'hex', group: 'grid' },
+		ZgOpacity:  { type: 'int', min: Z.MIN_ZG_OPACITY, max: Z.MAX_ZG_OPACITY, step: 5, group: 'grid' },
 		ZgLineScale: { type: 'int', min: Z.MIN_ZG_LINE_SCALE, max: Z.MAX_ZG_LINE_SCALE, step: 25, group: 'grid' },
+		ZgBorderScale: { type: 'int', min: Z.MIN_ZG_BORDER_SCALE, max: Z.MAX_ZG_BORDER_SCALE, step: 25, group: 'grid', zeroLabel: '自动' },
 		ZgLineMode: { type: 'enum', values: Z.ZG_LINE_MODES, group: 'grid' },
+		ZgInnerLineMode: { type: 'enum', values: Z.ZG_LINE_MODES, group: 'grid' },
+		ZgDashStyle: { type: 'enum', values: Z.ZG_DASH_STYLES, group: 'grid' },
+		ZgDashDensity: { type: 'int', min: Z.MIN_ZG_DASH_DENSITY, max: Z.MAX_ZG_DASH_DENSITY, step: 25, group: 'grid' },
+		ZgInnerRatio: { type: 'int', min: Z.MIN_ZG_INNER_RATIO, max: Z.MAX_ZG_INNER_RATIO, step: 5, group: 'grid' },
+		ZgEngMid: { type: 'int', min: Z.MIN_ZG_ENG_MID, max: Z.MAX_ZG_ENG_MID, step: 15, group: 'grid' },
+		ZgPinyinTop: { type: 'int', min: Z.MIN_ZG_PINYIN_TOP, max: Z.MAX_ZG_PINYIN_TOP, step: 5, group: 'grid' },
+		ZgBaselinePos: { type: 'int', min: Z.MIN_ZG_BASELINE_POS, max: Z.MAX_ZG_BASELINE_POS, step: 5, group: 'grid' },
+		ZgStartDot: { type: 'bool', group: 'grid' },
+		ZgLineCap: { type: 'enum', values: Z.ZG_LINE_CAPS, group: 'grid' },
+		ZgCrisp: { type: 'bool', group: 'grid' },
 		GridSize:   { type: 'int', min: Z.MIN_GRID_SIZE, max: Z.MAX_GRID_SIZE, step: 1, group: 'grid' },
 		GridRatio:  { type: 'int', min: 0, max: Z.MAX_GRID_RATIO, step: 5, group: 'grid', zeroLabel: '自动' },
 		ShowPinyin: { type: 'bool', group: 'text' },
@@ -218,6 +270,8 @@
 				return Z.normalizeInt(value, spec.min, spec.max, fallback);
 			case 'percent':
 				return Z.normalizeFloat(value, spec.min, spec.max, fallback);
+			case 'hex':
+				return Z.sanitizeHexColor(value);
 			case 'bool':
 				return typeof value === 'boolean' ? value : fallback;
 			case 'object':
@@ -264,6 +318,53 @@
 		return '';
 	};
 
+	/* 字格颜色消毒：只接受 #rrggbb（小写归一）；其余（含空）回退预设色 */
+	Z.sanitizeHexColor = function (value) {
+		var v = String(value == null ? '' : value).trim().toLowerCase();
+		return /^#[0-9a-f]{6}$/.test(v) ? v : '';
+	};
+
+	/* 数值区间收敛：0 / 非法 / 空 → fallback */
+	function clampNumber(value, min, max, fallback) {
+		var n = Number(value);
+		if (!isFinite(n) || n <= 0) return fallback;
+		return Math.min(max, Math.max(min, n));
+	}
+
+	/*
+	 * 字格绘制参数：配置 → opts 的唯一转换点（与完整版逻辑同源）。
+	 * 旧配置（无 ZgLineColor 等新字段）按 ZgColor 预设派生，渲染结果与旧版一致。
+	 * borderScale 输出绝对倍数（0 = 自动 → 拼音格 1 / 其余 2）。
+	 */
+	Z.resolveZgOptions = function (cfg) {
+		var c = cfg || {};
+		var type = Z.normalize(c.ZgType, Z.ZG_TYPES, Z.DEFAULTS.ZgType);
+		var presetKey = Z.normalize(c.ZgColor, Z.ZG_COLORS, Z.DEFAULTS.ZgColor);
+		var preset = Z.ZG_COLOR_VALUES[presetKey] || Z.ZG_COLOR_VALUES[Z.DEFAULTS.ZgColor];
+		return {
+			type: type,
+			lineColor: Z.sanitizeHexColor(c.ZgLineColor) || preset.line,
+			borderColor: Z.sanitizeHexColor(c.ZgBorderColor) || preset.border,
+			innerMode: Z.normalize(c.ZgInnerLineMode, Z.ZG_LINE_MODES, Z.DEFAULTS.ZgInnerLineMode),
+			borderMode: Z.normalize(c.ZgLineMode, Z.ZG_LINE_MODES, Z.DEFAULTS.ZgLineMode),
+			/* 配置存 ×100，收敛为倍数（0 / 非法 / 空 → fallback） */
+			lineScale: clampNumber(c.ZgLineScale / 100, 0.25, 3, 1),
+			borderScale: c.ZgBorderScale > 0
+				? clampNumber(c.ZgBorderScale / 100, 0.5, 3, 1)
+				: (type === '5' ? 1 : 2),
+			innerRatio: clampNumber(c.ZgInnerRatio, Z.MIN_ZG_INNER_RATIO, Z.MAX_ZG_INNER_RATIO, Z.DEFAULTS.ZgInnerRatio),
+			engMid: clampNumber(c.ZgEngMid, Z.MIN_ZG_ENG_MID, Z.MAX_ZG_ENG_MID, Z.DEFAULTS.ZgEngMid),
+			pinyinTop: clampNumber(c.ZgPinyinTop, Z.MIN_ZG_PINYIN_TOP, Z.MAX_ZG_PINYIN_TOP, Z.DEFAULTS.ZgPinyinTop),
+			baselinePos: clampNumber(c.ZgBaselinePos, Z.MIN_ZG_BASELINE_POS, Z.MAX_ZG_BASELINE_POS, Z.DEFAULTS.ZgBaselinePos),
+			startDot: c.ZgStartDot === true,
+			lineCap: Z.normalize(c.ZgLineCap, Z.ZG_LINE_CAPS, Z.DEFAULTS.ZgLineCap),
+			crisp: c.ZgCrisp === true,
+			opacity: clampNumber(c.ZgOpacity / 100, 0.1, 1, 1),
+			dashStyle: Z.normalize(c.ZgDashStyle, Z.ZG_DASH_STYLES, Z.DEFAULTS.ZgDashStyle),
+			dashDensity: clampNumber(c.ZgDashDensity / 100, 0.25, 2, 1)
+		};
+	};
+
 	Z.Config = {
 		Content: Z.DEFAULTS.Content,
 		Title: Z.DEFAULTS.Title,
@@ -281,8 +382,22 @@
 		CharOffsetY: Z.DEFAULTS.CharOffsetY,
 		ZgType: Z.DEFAULTS.ZgType,
 		ZgColor: Z.DEFAULTS.ZgColor,
+		ZgLineColor: Z.DEFAULTS.ZgLineColor,
+		ZgBorderColor: Z.DEFAULTS.ZgBorderColor,
+		ZgOpacity: Z.DEFAULTS.ZgOpacity,
 		ZgLineScale: Z.DEFAULTS.ZgLineScale,
+		ZgBorderScale: Z.DEFAULTS.ZgBorderScale,
 		ZgLineMode: Z.DEFAULTS.ZgLineMode,
+		ZgInnerLineMode: Z.DEFAULTS.ZgInnerLineMode,
+		ZgDashStyle: Z.DEFAULTS.ZgDashStyle,
+		ZgDashDensity: Z.DEFAULTS.ZgDashDensity,
+		ZgInnerRatio: Z.DEFAULTS.ZgInnerRatio,
+		ZgEngMid: Z.DEFAULTS.ZgEngMid,
+		ZgPinyinTop: Z.DEFAULTS.ZgPinyinTop,
+		ZgBaselinePos: Z.DEFAULTS.ZgBaselinePos,
+		ZgStartDot: Z.DEFAULTS.ZgStartDot,
+		ZgLineCap: Z.DEFAULTS.ZgLineCap,
+		ZgCrisp: Z.DEFAULTS.ZgCrisp,
 		GridSize: Z.DEFAULTS.GridSize,
 		ShowPinyin: Z.DEFAULTS.ShowPinyin,
 		StrokeAnim: Z.DEFAULTS.StrokeAnim,

@@ -13,7 +13,7 @@ function fieldId(schemaKey) { return schemaKey.charAt(0).toLowerCase() + schemaK
 
 /* 整数滑杆。max 可显式覆盖（如「每行格数」按纸宽动态上限）。
  * aria-valuetext 由 Panel 提供（读屏播报具体值，而非裸数字）。 */
-export function SchemaRange({ schemaKey, display, max, ['aria-valuetext']: ariaValueText }) {
+export function SchemaRange({ schemaKey, display, max, disabled, ['aria-valuetext']: ariaValueText }) {
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
 	const spec = ConfigSchema[schemaKey];
@@ -29,6 +29,7 @@ export function SchemaRange({ schemaKey, display, max, ['aria-valuetext']: ariaV
 				max={upper}
 				step={spec.step || 1}
 				value={value}
+				disabled={disabled}
 				aria-valuetext={ariaValueText != null ? ariaValueText : display}
 				onChange={function (e) { dispatch(setField({ key: schemaKey, value: Number(e.target.value) })); }}
 			/>
@@ -38,7 +39,7 @@ export function SchemaRange({ schemaKey, display, max, ['aria-valuetext']: ariaV
 }
 
 /* 百分比滑杆：内部 0–1，UI 0–100。 */
-export function SchemaPercentRange({ schemaKey, ['aria-valuetext']: ariaValueText }) {
+export function SchemaPercentRange({ schemaKey, disabled, ['aria-valuetext']: ariaValueText }) {
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
 	const spec = ConfigSchema[schemaKey];
@@ -53,6 +54,7 @@ export function SchemaPercentRange({ schemaKey, ['aria-valuetext']: ariaValueTex
 				max={Math.round(spec.max * 100)}
 				step={1}
 				value={percent}
+				disabled={disabled}
 				aria-valuetext={ariaValueText != null ? ariaValueText : (percent + '%')}
 				onChange={function (e) { dispatch(setField({ key: schemaKey, value: Number(e.target.value) / 100 })); }}
 			/>

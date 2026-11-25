@@ -32,7 +32,21 @@ function exists(p) {
 var htmlPath = path.join(DIST, 'index.html');
 check('dist/index.html 存在', exists(htmlPath));
 check('dist/lite/index.html 存在', exists(path.join(DIST, 'lite', 'index.html')));
-check('dist/font/1.ttf 存在', exists(path.join(DIST, 'font', '1.ttf')));
+/* lite 双份产物一致性：原位 lite/ 与分发拷贝 dist/lite/ 必须逐字节相同
+ * （构建期守卫见 tools/build.js assertSameContent；此处做分发前复核） */
+var liteSrc = path.join(ROOT, 'lite', 'index.html');
+var liteDist = path.join(DIST, 'lite', 'index.html');
+check('lite/index.html 存在', exists(liteSrc));
+if (exists(liteSrc) && exists(liteDist)) {
+	check('lite 双份产物逐字节一致', fs.readFileSync(liteSrc).equals(fs.readFileSync(liteDist)));
+}
+/* 示例字体不随仓库分发（约 39MB，见 .gitignore /font/）：缺失时降级为警告，不阻断冒烟 */
+if (!exists(path.join(DIST, 'font', '1.ttf'))) {
+	warnings.push('dist/font/1.ttf 不存在：font/ 未随仓库分发，构建 dist/font 为空，「本地字体」模式无内置示例');
+	console.log('  warn dist/font/1.ttf 不存在（示例字体不分发）');
+} else {
+	console.log('  ok  dist/font/1.ttf 存在');
+}
 
 var html = exists(htmlPath) ? fs.readFileSync(htmlPath, 'utf-8') : '';
 check('单文件内含预览容器标记', html.indexOf('printContent') !== -1 || html.indexOf('rp-preview') !== -1);

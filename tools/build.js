@@ -41,6 +41,20 @@ function sizeOf(file) {
 	return fs.existsSync(file) ? '（' + (fs.statSync(file).size / 1024).toFixed(1) + ' KB）' : '';
 }
 
+/* lite 双份产物一致性断言：lite/index.html（原位）与 dist/lite/index.html（拷贝）必须逐字节相同。
+ * Go 侧 embed all:lite 与 embed all:dist 各持一份，任一处漂移都会让离线 / 分发行为不一致；
+ * 构建收尾强制校验，避免「只更新一处」或拷贝中断被静默放过。 */
+function assertSameContent(a, b) {
+	var ba = fs.readFileSync(a);
+	var bb = fs.readFileSync(b);
+	if (ba.equals(bb)) return;
+	console.error('lite 产物一致性校验失败：');
+	console.error('  ' + path.relative(ROOT, a));
+	console.error('  ' + path.relative(ROOT, b));
+	console.error('两份内容不同，请确认没有手工改动产物，并重新运行 npm run build。');
+	process.exit(1);
+}
+
 async function main() {
 	var vendor = useVendor();
 
@@ -68,8 +82,13 @@ async function main() {
 
 	/* 4. 复制练字版 / 字体 / 本地 vendor */
 	copyFile(path.join(ROOT, 'lite', 'index.html'), path.join(DIST, 'lite', 'index.html'));
+	assertSameContent(path.join(ROOT, 'lite', 'index.html'), path.join(DIST, 'lite', 'index.html'));
 	if (vendor) copyDir(path.join(ROOT, 'vendor'), path.join(DIST, 'vendor'));
 	var fontCopied = copyDir(path.join(ROOT, 'font'), path.join(DIST, 'font'));
+	if (!fontCopied) {
+		console.warn('警告：未找到 font/ 示例字体（不随仓库分发，共 ~39MB），dist/font 为空；');
+		console.warn('       「本地字体」模式将无内置示例，可放入自有 ttf/otf/woff 后重新构建。');
+	}
 
 	/* 5. --vendor：把默认资源来源写死为本地（页面设置仍可切换回 CDN） */
 	if (vendor) {

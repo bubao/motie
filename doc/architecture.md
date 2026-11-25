@@ -8,7 +8,7 @@
 
 ## 共享核心
 
-标准版核心全部在 `web/src/core/`（纯逻辑 ESM，无全局命名空间）：`config.js`（配置读写、模板/颜色常量、字体清洗）、`content.js`（内容解析 / 分页 / 模板角色）、`zg-bg.js`（字格 SVG，7 种样式）、`sheet-layout.js`（版式真源：折行 / 分页 / 标题占位）、`font-store.js` / `font.js`（字体仓库与注入）、`assets.js`（HanziWriter / 拼音的 CDN 与本地 vendor 来源管理）、`pinyin.js`（拼音标注）、`stroke.js`（笔顺动画封装）、`pdf.js`（A4 PDF 导出）。组件与 hooks 一律通过 `web/src/core/index.js` 显式 `import`。
+标准版核心全部在 `web/src/core/`（纯逻辑 ESM，无全局命名空间）：`config.js`（配置读写、模板/颜色常量、字体清洗）、`content.js`（内容解析 / 分页 / 模板角色）、`zg-bg.js`（字格 SVG，7 种样式）、`sheet-layout.js`（版式真源：折行 / 分页 / 标题占位）、`font-store.js` / `font.js`（字体仓库与注入）、`assets.js`（HanziWriter / 拼音的 CDN 与本地 vendor 来源管理）、`pinyin.js`（拼音标注）、`stroke-order.js`（笔顺动画与字形数据封装；与 `stroke-library.js` 的笔画剪影图案库区分）、`pdf.js`（A4 PDF 导出）。组件与 hooks 一律通过 `web/src/core/index.js` 显式 `import`。
 
 练字版不引用 `web/src/core/`，而是在 `lite-src/vendor/` 保留四个独立副本（config / content / zg-bg / font），由 `lite-src/main.js` 顶部 import；两版共用内容解析、字格渲染与字体加载实现，练字版固定整页描红，不使用模板 / 拼音 / 颜色相关逻辑。
 
@@ -23,7 +23,8 @@
 - `web/src/core/font-store.js` / `font.js`：本地字体仓库（IndexedDB）与三种来源注入
 - `web/src/core/assets.js`：HanziWriter / 拼音的 CDN 与本地 vendor 来源管理（按需注入）
 - `web/src/core/pinyin.js`：拼音标注与状态
-- `web/src/core/stroke.js`：笔顺动画封装（HanziWriter 按需注入与降级）
+- `web/src/core/stroke-order.js`：笔顺动画封装（HanziWriter 按需注入与降级）
+- `web/src/core/stroke-library.js`：17 种基本笔画矢量剪影库（笔画字帖模式，非汉字字形数据）
 - `web/src/core/pdf.js`：A4 PDF 导出（jsPDF 构建时编译绑定，经 `initPdf` 注入）
 - `web/src/hooks/useSheetLayout.js` / `useZgBackground.js`：版式与字格背景的 React 封装
 
@@ -44,7 +45,7 @@ zitie/
 ├── web/              # 完整版源码（React + Redux，Vite root）
 │   ├── index.html    # 入口（内联浏览器检测，老设备自动跳练字版）
 │   └── src/
-│       ├── core/     # 纯逻辑 ESM 核心（config / content / sheet-layout / zg-bg / font / assets / pinyin / stroke / pdf）
+│       ├── core/     # 纯逻辑 ESM 核心（config / content / sheet-layout / zg-bg / font / assets / pinyin / stroke-order / stroke-library / pdf）
 │       ├── hooks/    # useSheetLayout / useZgBackground
 │       └── *.jsx      # main.jsx / App.jsx / Panel.jsx / Preview.jsx / BigPreview.jsx / store.js / styles.css
 ├── css/main.css      # 字格 / 分页 / 打印样式（两版共用）

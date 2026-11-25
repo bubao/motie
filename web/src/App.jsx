@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Panel } from './Panel.jsx';
 import { Preview } from './Preview.jsx';
 import { ToastHost } from './ToastHost.jsx';
 	import { usePdfExport } from './usePdfExport.js';
 	import { usePrint } from './usePrint.js';
-import { setField } from './store.js';
+import { pushToast, setField } from './store.js';
 import { Font, loadPinyin, setResourceMode, applyAssets } from './core/index.js';
 
 const THEME_NAMES = { light: '浅色', dark: '深色', system: '跟随系统' };
@@ -14,10 +14,11 @@ const THEME_KEYS = ['light', 'dark', 'system'];
 export default function App() {
 	const [pinyinReady, setPinyinReady] = useState(false);
 	const fontSource = useSelector(function (s) { return s.config.FontSource; });
+	const fontWeight = useSelector(function (s) { return s.config.FontWeight; });
 	const resourceMode = useSelector(function (s) { return s.config.ResourceMode; });
 	const theme = useSelector(function (s) { return s.config.Theme; });
 	const dispatch = useDispatch();
-	const { busy, exportPdf } = usePdfExport();
+	const { busy, progress, exportPdf } = usePdfExport();
 	const print = usePrint();
 
 	/* 外观：light / dark / system。system 时跟随系统并监听变化（打印仍白底，见 css/main.css） */
@@ -39,10 +40,23 @@ export default function App() {
 		};
 	}, [theme]);
 
-	/* 自定义字体：配置真源在 Redux，按来源注入 / 移除（屏幕与 PDF 同步） */
+	/* 自定义字体：配置真源在 Redux，按来源注入 / 移除（屏幕与 PDF 同步）；字重随 FontWeight 变化。
+	 * 系统字体不可用时 Font.use 内部回退默认字体（clear），这里补一条提示（同名字体不重复提示）。 */
+	var warnedSystemRef = useRef(null);
 	useEffect(function () {
-		Font.use(fontSource || { type: 'default' });
-	}, [fontSource]);
+		var src = fontSource || { type: 'default' };
+		if (src.type !== 'system') {
+			warnedSystemRef.current = null;
+			Font.use(src, { weight: fontWeight });
+			return undefined;
+		}
+		Font.use(src, { weight: fontWeight }).then(function (ok) {
+			if (ok || warnedSystemRef.current === src.name) return;
+			warnedSystemRef.current = src.name;
+			dispatch(pushToast({ type: 'error', text: '系统字体「' + src.name + '」不可用，已回退默认字体。' }));
+		});
+		return undefined;
+	}, [fontSource, fontWeight, dispatch]);
 
 	/* 第三方资源来源：CDN / 本地 vendor 为全局单例，切换后重新加载并刷新状态行 */
 	useEffect(function () {
@@ -86,7 +100,7 @@ export default function App() {
 				</div>
 			</header>
 			<div className="rp-body">
-				<Panel pdfBusy={busy} onExportPdf={exportPdf} onPrint={print} />
+				<Panel pdfBusy={busy} pdfProgress={progress} onExportPdf={exportPdf} onPrint={print} />
 				<Preview pinyinReady={pinyinReady} />
 			</div>
 			<ToastHost />

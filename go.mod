@@ -1,0 +1,3 @@
+module motie
+
+go 1.27.2

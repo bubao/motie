@@ -90,12 +90,16 @@ const injectScript = (url) => new Promise((resolve, reject) => {
 	(document.head || document.documentElement).appendChild(script);
 });
 
-/* HanziWriter：动态注入 <script>；本地缺失时回退 CDN。返回 Promise 供调用方等待 */
+/* HanziWriter：动态注入 <script>；本地缺失时回退 CDN。返回 Promise 供调用方等待。
+ * 并发调用必须共享同一个加载 Promise：若只在 writerUrl 命中时返回字符串，
+ * 后到的调用方（如静态笔顺批量加载多字）会绕过等待，在脚本就绪前误判不可用。 */
 let loadingHanzi = null;
 export const loadHanziWriter = async () => {
 	const target = urlOf('hanziWriter');
-	if (writerUrl === target) return writerUrl;
-	writerUrl = target;
+	if (writerUrl !== target) {
+		writerUrl = target;
+		loadingHanzi = null;
+	}
 	if (!loadingHanzi) {
 		loadingHanzi = (async () => {
 			try {

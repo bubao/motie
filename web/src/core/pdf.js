@@ -1,7 +1,8 @@
 /**
- * 导出 PDF：把当前字帖（内容 / 排版模板 / 文字颜色 / 标题 / 版式 / 字格 / 拼音 / 字体）
- * 按纸张逐页渲染到 canvas，再用 jsPDF 合成 PDF 文件。
- * jsPDF 由专业版构建时编译绑定（npm 包，经 initPdf 注入），无 CDN / vendor 回退。
+ * 导出：把当前字帖（内容 / 排版模板 / 文字颜色 / 标题 / 版式 / 字格 / 拼音 / 字体）
+ * 按纸张逐页渲染到 canvas，输出每页 JPEG 图像序列（0.92）与纸张尺寸。
+ * PDF 由桌面内核（Go）组装（internal/pdf）：JPEG 以 /DCTDecode 直通嵌入，
+ * 不经纯 JS 解码路径；纯浏览器（无内核）不提供合成，导出入口置灰。
  *
  * 版式（折行 / 分页 / 标题占位 / 行列数）来自唯一真源 SheetLayout，
  * 与屏幕预览、页面打印共用同一份计算结果。
@@ -9,21 +10,21 @@
 import { ContentModel } from './content.js';
 import { SheetLayout } from './sheet-layout.js';
 import { buildZgSvg } from './zg-bg.js';
-import { INK_RGB } from './config.js';
-import { loadPinyin } from './pinyin.js';
+import { buildControlSvg } from './control.js';
+import { strokeDataUri } from './stroke-library.js';
+import { INK_RGB, FONT_WEIGHT_NUM, resolveZgOptions } from './config.js';
+import { loadPinyin, getPinyin } from './pinyin.js';
+import { getStrokeMedians } from './stroke-order.js';
 
 const PAGE = ContentModel.defaultPage;      /* A4（mm） */
 /* 画布分辨率：CSS 96dpi 的 1.5 倍。P3-15 实测（20 页 A4）：
- * 2×PNG 5.31MB / 13.2s，1.5×PNG 3.86MB / 8.0s，二者缩放后笔画清晰度目视无差；
- * JPEG 0.92 反而 8.72MB（白底细线高频噪声），故保持 PNG + 1.5×。 */
+ * 2×PNG 5.31MB / 13.2s，1.5×PNG 3.86MB / 8.0s，二者缩放后笔画清晰度目视无差。
+ *
+ * 2026-11 复测（5000 字 / 57 页）：PNG + jsPDF 38.9s、长任务 650ms/页（瓶颈是 jsPDF
+ * 的 PNG 解码）；同条件 JPEG(0.92) 2.4s。现已改为 Go 侧组装，JPEG 直通 DCTDecode，
+ * 前端只负责光栅化，保留 1.5× 以兼顾清晰度与体积。 */
 const SCALE = 1.5;
 const PX_PER_MM = 96 / 25.4 * SCALE;
-/* 专业版构建时注入 npm 包构造器（web/src/main.jsx 编译绑定 jspdf） */
-let injectedCtor = null;
-
-export const initPdf = (ctor) => {
-	injectedCtor = ctor || null;
-};
 
 const mmPx = (mm) => mm * PX_PER_MM;
 
@@ -50,13 +51,18 @@ const dateStamp = () => {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-const drawPage = (page, layout, gridImg, cfg, pageIndex, pageCount) => {
+/* canvas 由调用方传入并逐页复用：每页绘制完立即编码为 JPEG，不再让整版位图同时驻留内存 */
+const drawPage = (canvas, page, layout, gridImg, cfg, pageIndex, pageCount, strokeMarks, controlImgs, strokeImgs) => {
 	const { lines } = page;
 	const { gridMm } = layout;
 	const gridDevice = mmPx(gridMm);
+	/* 字间距：有效步距 = 格宽 × pitchFactor（版式真源，CharGap=0 时为 1） */
+	const pitchFactor = layout.pitchFactor || 1;
+	/* 控笔（C1）/ 笔画：格子内画剪影（SVG → Image → drawImage），不画文字 */
+	const isControl = cfg.Mode === 'control';
+	const isStroke = cfg.Mode === 'stroke';
 
 	const pageSize = layout.page || PAGE;
-	const canvas = document.createElement('canvas');
 	canvas.width = Math.round(mmPx(pageSize.width));
 	canvas.height = Math.round(mmPx(pageSize.height));
 
@@ -66,8 +72,9 @@ const drawPage = (page, layout, gridImg, cfg, pageIndex, pageCount) => {
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 
-	/* 行起点：锁定列数时整行居中（字距已移除，行宽 = 格数 × 格宽） */
-	const rowWidth = lines.length ? lines[0].length * gridDevice : 0;
+	/* 行起点：锁定列数时整行居中（含字距的有效占位 = (cols−1)×步距 + 格宽）。
+	 * 行宽按版式真源 cols（english 词单元行无 cells，不能取 lines[0].length）。 */
+	const rowWidth = lines.length ? ((layout.cols - 1) * pitchFactor + 1) * gridDevice : 0;
 	const usableDevice = mmPx(layout.usableW);
 	let startX = mmPx(layout.margin.left);
 	if (layout.fixedCols && rowWidth > 0 && rowWidth < usableDevice) {
@@ -83,7 +90,11 @@ const drawPage = (page, layout, gridImg, cfg, pageIndex, pageCount) => {
 	}
 	const rgb = inkRGB(cfg);
 	const modelColor = `rgba(${rgb}, ${cfg.InkAlpha})`;
-	const traceColor = `rgba(${rgb}, ${cfg.InkAlpha * 0.5})`;
+	/* 描红颜色（A3）：auto = 同主色 × 0.5 透明度；指定色 = 该色 × 主色不透明度 */
+	const traceRGB = cfg.TraceColor === 'auto' ? rgb : (INK_RGB[cfg.TraceColor] || rgb);
+	const traceColor = `rgba(${traceRGB}, ${cfg.TraceColor === 'auto' ? cfg.InkAlpha * 0.5 : cfg.InkAlpha})`;
+	/* 字体粗细（A1）：normal 400 / bold 700，与屏幕 / 打印同源 */
+	const fontWeight = FONT_WEIGHT_NUM[cfg.FontWeight] || 400;
 
 	/* 行距 = 配置格倍数 × 格宽（精确值，与屏幕 / 打印一致，见 content.js）：
 	 * 行区高 = 可用高 − 标题占位；行盒高 = 字格高（拼音格 1.4×格，其余 1.0×格）；
@@ -98,33 +109,91 @@ const drawPage = (page, layout, gridImg, cfg, pageIndex, pageCount) => {
 	const blockOffsetMm = align === 'top' ? 0 : align === 'bottom' ? Math.max(0, areaMm - blockMm) : (areaMm - blockMm) / 2;
 	const startY = mmPx(layout.margin.top) + titleH + mmPx(blockOffsetMm);
 	const pitch = rowBoxMm + gapMm;
-	const isPyGrid = cfg.ZgType === '5';
-	/* 格子高 = 格宽 × 宽高比（版式真源 ratio：拼音格默认 1.4，其余默认 1.0，用户可调） */
+	/* 上区型格：拼音格（5，四线三格 0.4 格）与格上拼音条（10，窄条 0.25 格，对齐 z2h「显示拼音」） */
+	const hasTopZone = cfg.ZgType === '5' || cfg.ZgType === '10';
+	/* 格子高 = 格宽 × 宽高比（版式真源 ratio：拼音格默认 1.4、拼音条 1.25，其余默认 1.0，用户可调） */
 	const gridH = gridDevice * layout.ratio;
-	/* 拼音格上区占位高度（格倍数）：上区 = 宽高比 − 1，字居下区 1.0×格；其余格字居整格 */
-	const topPad = isPyGrid ? layout.ratio - 1 : 0;
+	/* 上区占位高度（格倍数）：上区 = 宽高比 − 1，字居下区 1.0×格；其余格字居整格 */
+	const topPad = hasTopZone ? layout.ratio - 1 : 0;
+	/* 格上拼音条：条内居中写拼音（屏幕 / 打印 / PDF 同语义；受「显示拼音」总开关控制） */
+	const showBarPy = cfg.ZgType === '10' && cfg.ShowPinyin && !isControl;
 	/* 字体在格内的水平 / 垂直偏移（格倍数），与屏幕 / 打印一致 */
 	const dx = Number(cfg.CharOffsetX) || 0;
 	const dy = Number(cfg.CharOffsetY) || 0;
 	lines.forEach((line, r) => {
 		const y = startY + r * mmPx(pitch);
-		line.forEach((item, c) => {
+		/* english：词单元行——词内字母连续（步距 < 1 格）、词间空 1 格，整词一个角色 */
+		if (line.eng) {
+			for (let c = 0; c < layout.cols; c++) {
+				ctx.drawImage(gridImg, startX + c * gridDevice * pitchFactor, y, gridDevice, gridH);
+			}
+			const step = gridDevice * (layout.letterStep || 0.62) * pitchFactor;
+			line.words.forEach((word) => {
+				const x0 = startX + word.offset * gridDevice * pitchFactor;
+				if (word.role !== 'blank') {
+					ctx.font = `${fontWeight} ${Math.round(mmPx(gridMm * (Number(cfg.CharScale) || 0.725)))}px ${charFontStack()}`;
+					ctx.fillStyle = word.role === 'trace' ? traceColor : modelColor;
+					word.chars.forEach((ch, i) => {
+						ctx.fillText(ch, x0 + i * step + step / 2 + gridDevice * dx, y + gridDevice * (topPad + 0.53125) + gridDevice * dy);
+					});
+				}
+				/* 标点：附在词内字母右下角（与屏幕 / 打印同源） */
+				(word.marks || []).forEach((mk, i) => {
+					if (!mk) return;
+					ctx.font = `${fontWeight} ${Math.round(mmPx(gridMm * 0.3))}px ${charFontStack()}`;
+					ctx.fillStyle = word.role === 'trace' ? traceColor : modelColor;
+					ctx.fillText(mk, x0 + i * step + step * 0.82 + gridDevice * dx, y + gridDevice * (topPad + 0.82) + gridDevice * dy);
+				});
+			});
+			return;
+		}
+		line.cells.forEach((item, c) => {
 			const { char, role } = item;
-			const x = startX + c * gridDevice;
+			const x = startX + c * gridDevice * pitchFactor;
 
 			/* 字格：空临格与有字格同一套字格样式（仅无字）；拼音格上区四线三格占位 */
 			ctx.drawImage(gridImg, x, y, gridDevice, gridH);
 
-			/* 汉字（与 CSS 的 line-height / font-size 对齐；拼音格居下区 1.0×格）；空临格不画字 */
+			/* 汉字（与 CSS 的 line-height / font-size 对齐；拼音格居下区 1.0×格）；空临格不画字。
+			 * 控笔（C1）：改画图案（范字深色实线 / 描红浅色虚线），与屏幕 / 打印同源。 */
 			if (role !== 'blank') {
-				ctx.font = `${Math.round(mmPx(gridMm * 0.725))}px ${charFontStack()}`;
-				ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
-				ctx.fillText(char, x + gridDevice / 2 + gridDevice * dx, y + gridDevice * (topPad + 0.53125) + gridDevice * dy);
+			if (isControl) {
+				/* 逐行序列：每格按 cell.char（图案 key）取图，未知 key 跳过 */
+				const ci = controlImgs && controlImgs[char];
+				if (ci) ctx.drawImage(role === 'trace' ? ci.trace : ci.model, x, y, gridDevice, gridDevice);
+			} else if (isStroke) {
+					/* 笔画：按角色取色剪影（与屏幕背景 / 打印同源），未知 key 跳过 */
+					const s = strokeImgs && strokeImgs[char];
+					if (s) ctx.drawImage(role === 'trace' ? s.trace : s.model, x, y, gridDevice, gridDevice);
+				} else {
+					/* 字占格比例（A2）：默认 0.725，与屏幕 / 打印同源 */
+					ctx.font = `${fontWeight} ${Math.round(mmPx(gridMm * (Number(cfg.CharScale) || 0.725)))}px ${charFontStack()}`;
+					ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
+					ctx.fillText(char, x + gridDevice / 2 + gridDevice * dx, y + gridDevice * (topPad + 0.53125) + gridDevice * dy);
+					/* 格上拼音条（type10）：拼音写在顶部窄条中央，不随字形偏移（与屏幕 / 打印同源） */
+					if (showBarPy) {
+						ctx.font = `${Math.round(mmPx(gridMm * 0.13))}px ${pinyinFontStack()}`;
+						ctx.fillStyle = `rgba(${rgb}, ${cfg.InkAlpha * 0.9})`;
+						ctx.fillText(getPinyin(char), x + gridDevice / 2, y + gridDevice * topPad / 2);
+					}
+					/* 静态笔顺（B4）：每笔中点标 1..n；几何与屏幕同源（medians 0..1，按 CharScale 居中） */
+					if (strokeMarks && strokeMarks[char]) {
+						const scale = Number(cfg.CharScale) || 0.725;
+						ctx.font = `${Math.round(mmPx(gridMm * 0.16))}px ${pinyinFontStack()}`;
+						ctx.fillStyle = `rgba(${rgb}, ${cfg.InkAlpha * 0.55})`;
+						strokeMarks[char].forEach((m, i) => {
+							const px = x + gridDevice * ((1 - scale) / 2 + m.x * scale) + gridDevice * dx;
+							/* medians 为 y 向上坐标系，canvas y 向下，需翻转（与屏幕同源） */
+							const py = y + gridH * ((1 - scale) / 2 + (1 - m.y) * scale) + gridDevice * dy;
+							ctx.fillText(String(i + 1), px, py);
+						});
+					}
+				}
 			}
 
-			/* 标点：不占格，字格右下角（T0.8）；空临格也照画 */
-			if (item.mark) {
-				ctx.font = `${Math.round(mmPx(gridMm * 0.3))}px ${charFontStack()}`;
+			/* 标点：不占格，字格右下角（T0.8）；空临格也照画；控笔 / 笔画无标点 */
+			if (item.mark && !isControl && !isStroke) {
+				ctx.font = `${fontWeight} ${Math.round(mmPx(gridMm * 0.3))}px ${charFontStack()}`;
 				ctx.fillStyle = role === 'trace' ? traceColor : modelColor;
 				ctx.fillText(item.mark, x + gridDevice * 0.82 + gridDevice * dx, y + gridDevice * (topPad + 0.82) + gridDevice * dy);
 			}
@@ -158,37 +227,127 @@ const fileStamp = () => {
 	return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 };
 
-/* 导出：config 显式传入（Redux 唯一状态源）；缺省回退默认配置（便于调试）。 */
-export const exportPdf = async (config) => {
+/* 导出文件名（与旧 jsPDF 版本一致，便于用户识别） */
+export const pdfFilename = () => `墨帖-${fileStamp()}.pdf`;
+
+/* canvas → JPEG Blob（0.92）；老浏览器无 toBlob 时回落 dataURL。 */
+const canvasToJPEG = (canvas) => new Promise((resolve, reject) => {
+	const fallback = () => {
+		try {
+			const bin = atob(canvas.toDataURL('image/jpeg', 0.92).split(',')[1]);
+			const bytes = new Uint8Array(bin.length);
+			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+			resolve(new Blob([bytes], { type: 'image/jpeg' }));
+		} catch (e) { reject(e); }
+	};
+	if (canvas.toBlob) {
+		canvas.toBlob((blob) => {
+			if (blob) resolve(blob); else fallback();
+		}, 'image/jpeg', 0.92);
+	} else {
+		fallback();
+	}
+});
+
+/* 渲染导出页面序列：config 显式传入（Redux 唯一状态源）；缺省回退默认配置（便于调试）。
+ * 返回 { pages: Blob[], widthMM, heightMM }（页序 = 版面页序，JPEG 0.92）。
+ * opts.onProgress?(done, total)：每完成一页回调，供界面显示进度。
+ * 单块画布逐页复用 + 页间让出主线程：压住内存峰值，进度可回灌界面。 */
+export const renderPages = async (config, opts) => {
 	const cfg = config || {};
-	if (!String(cfg.Content || '').trim()) {
+	const isControl = cfg.Mode === 'control';
+	const isStroke = cfg.Mode === 'stroke';
+	if (!String(cfg.Content || '').trim() && !isControl) {
 		throw new Error('请先输入字帖内容');
 	}
-	if (!injectedCtor) throw new Error('PDF 组件未注入，请重新打开页面');
-	const JsPdf = injectedCtor;
 	const layout = SheetLayout.compute({ config: cfg });
 	await loadPinyin();
 	/* 自定义字体可能仍在加载：等字体就绪再绘制，避免 canvas 回落默认字体 */
 	if (document.fonts && document.fonts.ready) await document.fonts.ready;
-	const gridUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(buildZgSvg(cfg.ZgType, cfg.ZgColor, cfg.ZgLineScale, cfg.ZgLineMode));
+	/* 字格参数必须经 resolveZgOptions 派生（面板缩略图 / 预览同源）：旧的位置参数调用会被当对象读，
+	 * 颜色 / 线型静默回退默认（F 修复）。 */
+	const gridUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(buildZgSvg(resolveZgOptions(cfg)));
 	const gridImg = await loadImage(gridUri);
-	const pageSize = layout.page || PAGE;
-	/* compress: 开启流压缩，避免 PNG 像素数据以未压缩形式嵌入（体积可降至 1/20） */
-	const pdf = new JsPdf({ unit: 'mm', format: [pageSize.width, pageSize.height], orientation: 'portrait', compress: true });
-	/* 文档元信息（T2.3）：标题固定含「墨帖」，可带内容标题；作者取练习者姓名 */
-	if (pdf.setProperties) {
-		pdf.setProperties({
-			title: '墨帖' + (cfg.Title ? ' · ' + cfg.Title : ''),
-			subject: '字帖练习',
-			creator: '墨帖',
-			author: cfg.Name || ''
-		});
+	/* 主色 / 描红色（控笔、笔画共用；与屏幕 / 打印同源） */
+	const rgb = inkRGB(cfg);
+	const modelColor = `rgba(${rgb}, ${cfg.InkAlpha})`;
+	const traceRGB = cfg.TraceColor === 'auto' ? rgb : (INK_RGB[cfg.TraceColor] || rgb);
+	const traceColor = `rgba(${traceRGB}, ${cfg.TraceColor === 'auto' ? cfg.InkAlpha * 0.5 : cfg.InkAlpha})`;
+	/* 控笔（C1）：按版面唯一图案 key 预加载范字 / 描红剪影（逐行序列下每格可不同），与屏幕 / 打印同色同源 */
+	let controlImgs = null;
+	if (isControl) {
+		const controlUri = (key, color, role) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(buildControlSvg(key, color, role));
+		const keys = [];
+		const seen = {};
+		layout.pages.forEach((p) => p.lines.forEach((line) => {
+			if (line.eng) return;
+			line.cells.forEach((c) => {
+				if (c.role === 'blank' || !c.char) return;
+				if (!seen[c.char]) { seen[c.char] = 1; keys.push(c.char); }
+			});
+		}));
+		controlImgs = {};
+		await Promise.all(keys.map(async (k) => {
+			controlImgs[k] = {
+				model: await loadImage(controlUri(k, modelColor, 'model')),
+				trace: await loadImage(controlUri(k, traceColor, 'trace'))
+			};
+		}));
 	}
-	const canvases = layout.pages.map((page, i) => drawPage(page, layout, gridImg, cfg, i, layout.pages.length));
-	canvases.forEach((canvas, i) => {
-		if (i > 0) pdf.addPage();
-		pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, pageSize.width, pageSize.height);
-	});
-	pdf.save(`墨帖-${fileStamp()}.pdf`);
-	return canvases.length;
+	/* 笔画：按版面唯一笔画 key 预加载范字 / 描红剪影（每格可不同），与屏幕 / 打印同色同源 */
+	let strokeImgs = null;
+	if (isStroke) {
+		const keys = [];
+		const seen = {};
+		layout.pages.forEach((p) => p.lines.forEach((line) => {
+			if (line.eng) return;
+			line.cells.forEach((c) => {
+				if (c.role === 'blank' || !c.char) return;
+				if (!seen[c.char]) { seen[c.char] = 1; keys.push(c.char); }
+			});
+		}));
+		strokeImgs = {};
+		await Promise.all(keys.map(async (k) => {
+			strokeImgs[k] = {
+				model: await loadImage(strokeDataUri(k, modelColor, 'model')),
+				trace: await loadImage(strokeDataUri(k, traceColor, 'trace'))
+			};
+		}));
+	}
+	/* 静态笔顺（B4）：开启时按版面唯一字预加载 medians（stroke-order.js 内部按字缓存） */
+	let strokeMarks = null;
+	if (cfg.StrokeOrder) {
+		const chars = [];
+		const seen = {};
+		layout.pages.forEach((p) => p.lines.forEach((line) => {
+			if (line.eng) {
+				line.words.forEach((word) => {
+					if (word.role === 'blank') return;
+					word.chars.forEach((ch) => {
+						if (!seen[ch]) { seen[ch] = 1; chars.push(ch); }
+					});
+				});
+				return;
+			}
+			line.cells.forEach((c) => {
+				if (c.role === 'blank' || !c.char) return;
+				if (!seen[c.char]) { seen[c.char] = 1; chars.push(c.char); }
+			});
+		}));
+		const pairs = await Promise.all(chars.map((ch) => getStrokeMedians(ch).then((m) => [ch, m])));
+		strokeMarks = {};
+		pairs.forEach(([ch, m]) => { if (m) strokeMarks[ch] = m; });
+	}
+	const pageSize = layout.page || PAGE;
+	const canvas = document.createElement('canvas');
+	const total = layout.pages.length;
+	const pages = [];
+	for (let i = 0; i < total; i++) {
+		drawPage(canvas, layout.pages[i], layout, gridImg, cfg, i, total, strokeMarks, controlImgs, strokeImgs);
+		pages.push(await canvasToJPEG(canvas));
+		if (opts && typeof opts.onProgress === 'function') opts.onProgress(i + 1, total);
+		/* 让出主线程：进度提示得以绘制，界面不再被整版导出阻塞 */
+		if (i + 1 < total) await new Promise(function (resolve) { setTimeout(resolve, 0); });
+	}
+	return { pages: pages, widthMM: pageSize.width, heightMM: pageSize.height };
 };

@@ -87,17 +87,19 @@ npm run build        # 生成 dist/（完整版单文件 + 练字版）；加 --
 npm run build:react  # 仅完整版多文件产物（dist-react/，http 部署）
 npm run build:lite   # 仅重新生成 lite/index.html（练字版）
 npm run vendor       # 下载 hanzi-writer / pinyin-pro 到 vendor/
-npm run serve        # 启动本地服务（dist/，0.0.0.0:8080），供 Kindle 等访问字体
 ```
 
+供 Kindle 等老设备经 HTTP 访问时，用 Go 内核作服务器（内嵌前端产物）：`make run`（或 `MOTIE_NO_WINDOW=1 make run` 只起服务不拉窗口）。标准版打开 `http://<本机IP>:<端口>/index.html`，练字版 `http://<本机IP>:<端口>/lite/index.html`；在字体管理器「发布」后，练字版刷新即可在网络字体列表看到。
+
 `dist/` 与 `lite/` 均已 gitignore，由构建生成。分发时需整个 `dist/` 目录（`index.html` 与 `lite/` 同目录）：老设备打开 `index.html` 会自动跳转 `lite/index.html`；若只拷贝 `index.html`，练字版跳转会 404。只分发给 Kindle 时可单独拷 `lite/index.html`。
+
+**示例字体（`font/`）不随仓库分发**（共约 39MB，已 gitignore）。新克隆构建出的 `dist/font/` 为空，「本地字体」模式没有内置示例；如需内置示例，请自行把 ttf / otf / woff 字体放入 `font/` 后重新 `npm run build`（构建时会给出显式警告）。用户自己的字体走字体管理器导入，不受此影响。
 
 ## 文档
 
 - [技术说明](doc/architecture.md)：框架 / 构建、共享核心、模块清单、打印与目录结构
 - [网页功能设计](doc/web-features.md)：功能地图、优先级与分期（**当前重点**）
-- [桌面版架构设计](doc/desktop-architecture.md)：Go 内核 + 内嵌 React + 平台 WebView 壳（规划中）
-- [桌面版落地 TODO](doc/desktop-plan-todo.md)：阶段 0–4 任务清单
+- [桌面版架构设计](doc/desktop-architecture.md)：Go 内核 + 内嵌 React + 平台 WebView 壳（含落地状态）
 - [练字版（Kindle）说明](doc/lite-kindle.md)：定位与交互、服务模式（字体发布 / 列表）
 - [浏览器识别](doc/browser-detect.md)：能力探测、UA 特征与 URL 覆盖参数
 - [常见问题](doc/faq.md)

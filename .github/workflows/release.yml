@@ -1,0 +1,204 @@
+name: Release
+
+# 触发条件：推送 v* tag 自动发版；或手动指定 tag 触发
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 Git Tag（例如 v0.1.0）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  # ==========================================================================
+  # 0) 测试防线：Go 静态检查（gofmt / go vet）+ 竞态检测 + 前端构建与 Vitest
+  #    所有打包任务必须等待本 Job 通过后才会启动
+  # ==========================================================================
+  test:
+    name: CI Gate (fmt / vet / race / frontend tests)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Check Go formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "[ERROR] 以下 Go 文件未通过 gofmt 格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "[OK] 所有 Go 文件均符合 gofmt 规范"
+
+      - name: Run Go static analysis (go vet)
+        run: go vet ./...
+
+      - name: Check generated contract (typegen -check)
+        # 与 Makefile ci 的 check-contract 一致：DTO / 事件漂移不得拖到发版才暴露
+        run: make check-contract
+
+      - name: Run backend tests (race detector)
+        run: go test -race ./...
+
+      - name: Install frontend deps & run full tests
+        # 先 build：smoke.test.mjs 是「构建后产物检查」（dist/ 静态完整性 + headless 直开），
+        # 且 tools/build.js 的 lite 双份产物一致性断言只在构建时触发
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+  # ==========================================================================
+  # 1) 主发版（Ubuntu）：Windows / Linux 应用二进制、便携包、deb/rpm、校验和
+  #    本任务负责创建 GitHub Release
+  # ==========================================================================
+  goreleaser:
+    name: GoReleaser (Windows / Linux)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install packaging tools (ImageMagick)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Dist Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: .goreleaser-dist/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  # 2) Windows 安装器（NSIS）：per-user 安装 + 开始菜单快捷方式
+  #    CI 的 Ubuntu 上 nsis 可用（本机 macOS 环境 makensis 崩溃，见文档局限记录）
+  # ==========================================================================
+  windows-installer:
+    name: Windows Installer (NSIS)
+    runs-on: ubuntu-latest
+    needs: goreleaser
+    env:
+      TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install NSIS + ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis imagemagick
+
+      - name: Build frontend (offline vendor)
+        run: |
+          npm ci
+          npm run vendor
+          npm run build -- --vendor
+
+      - name: Build Windows app & installer
+        run: scripts/package.sh windows "${TAG_NAME#v}" amd64
+
+      - name: Generate checksums & upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd dist-desktop
+          rm -f checksums-windows.txt
+          sha256sum motie-*-windows-*.exe > checksums-windows.txt
+          cat checksums-windows.txt
+          gh release upload "${TAG_NAME}" \
+            motie-${TAG_NAME#v}-windows-amd64.exe \
+            motie-${TAG_NAME#v}-windows-amd64-setup.exe \
+            motie-${TAG_NAME#v}-windows-amd64-portable.zip \
+            checksums-windows.txt --clobber
+
+# ============================================================================
+# 说明：macOS 产物（Motie.app 的 zip / dmg）不在此 CI 构建——
+#       ad-hoc 签名、分架构 DMG 由本机 `scripts/package.sh macos` 产出后
+#       手动上传；若后续配置签名证书 Secret，可参照 slidev 工程增加
+#       macos-app job（配置 APPLE_* Secret 后自动签名公证）。
+# ============================================================================

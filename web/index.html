@@ -5,15 +5,18 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>墨帖</title>
 	<script>
-	/* 早期主题：避免深色模式首屏白闪（读取已存配置；默认跟随系统） */
+	/* 早期主题：避免深色模式首屏白闪（桌面端读 Go 注入的主题；浏览器读已存配置；默认跟随系统） */
 	(function () {
 		'use strict';
-		var theme = 'system';
+		var bootTheme = (window.__MOTIE_DESKTOP__ && window.ZITIE_BOOT && window.ZITIE_BOOT.Theme) || '';
+		var theme = bootTheme || 'system';
 		try {
-			var raw = window.localStorage.getItem('zitie.config');
-			if (raw) {
-				var t = JSON.parse(raw).Theme;
-				if (t === 'light' || t === 'dark' || t === 'system') theme = t;
+			if (!bootTheme) {
+				var raw = window.localStorage.getItem('zitie.config');
+				if (raw) {
+					var t = JSON.parse(raw).Theme;
+					if (t === 'light' || t === 'dark' || t === 'system') theme = t;
+				}
 			}
 		} catch (e) { /* 忽略 */ }
 		var dark = theme === 'dark' ||
@@ -23,9 +26,11 @@
 	</script>
 	<script>
 	/* 浏览器能力检测（独立 detect 逻辑内联，ES5）：老式 / 墨水屏浏览器（Kindle 等）自动跳转到练字版。
-	   覆盖参数：?force=modern / ?force=lite / ?nodetect=1 */
+	   覆盖参数：?force=modern / ?force=lite / ?nodetect=1
+	   桌面壳（Go 内核注入 __MOTIE_DESKTOP__）跳过：永远留在完整版。 */
 	(function () {
 		'use strict';
+		if (window.__MOTIE_DESKTOP__) return;
 		var LEGACY_UA = /kindle|silk|netfront|kobo|nook|pocketbook|boox|onyx|ireader|tolino|bookeen|storytel/i;
 
 		function supportsModern() {

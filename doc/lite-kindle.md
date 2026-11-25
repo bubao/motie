@@ -11,8 +11,8 @@
 
 ## 服务模式（Kindle 可用字体）
 
-Kindle 实验浏览器不支持 IndexedDB，无法用完整版的本地字体库。执行 `npm run serve` 后：
+Kindle 实验浏览器不支持 IndexedDB，无法用完整版的本地字体库。用 Go 内核作服务器（内嵌前端产物与 lite，`make run`；端口取配置，默认 39130）：
 
-- 标准版 <http://127.0.0.1:8080/index.html>：字体管理器里点「发布」，把本地字体上传到服务端 `dist/font/`（仅 http 服务模式下显示该按钮）。
-- Kindle 打开 <http://127.0.0.1:8080/lite/index.html>（或启动时打印的局域网地址）：字体区会列出服务端字体，点击即通过网络加载应用；`file://` 直开时无服务，列表自动隐藏。
-- 服务端文件名限 ASCII（老浏览器 `@font-face` 对中文路径支持差），中文显示名由发布时一并上传并在列表展示。
+- 标准版 `http://<本机IP>:<端口>/index.html`：字体管理器里点「发布」，把本地字体上传到内核用户字体库（仅 http 服务模式下显示该按钮）。
+- Kindle 打开 `http://<本机IP>:<端口>/lite/index.html`：字体区会拉取 `GET /api/fonts` 的用户字体列表，点击即经 `/api/fonts/file/<id>` 加载应用；`file://` 直开时无服务，列表自动隐藏。
+- 文件名限 ASCII（老浏览器 `@font-face` 对中文路径支持差），中文显示名在列表中展示。

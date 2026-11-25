@@ -281,6 +281,43 @@
 	color: var(--ink-soft);
 }
 
+/* 字帖类型：内容页顶部横向 tab 栏（5 项等分一行） */
+.rp-tabs {
+	display: flex;
+	gap: 2px;
+	margin-bottom: 12px;
+	border-bottom: 1px solid var(--line);
+}
+
+.rp-tab {
+	flex: 1 1 0;
+	padding: 7px 2px 8px;
+	margin-bottom: -1px;
+	border: none;
+	border-bottom: 2px solid transparent;
+	background: none;
+	font-family: inherit;
+	font-size: 13px;
+	text-align: center;
+	color: var(--ink-soft);
+	cursor: pointer;
+}
+
+.rp-tab:hover {
+	color: var(--ink);
+}
+
+.rp-tab.is-active {
+	color: var(--cinnabar);
+	border-bottom-color: var(--cinnabar);
+	font-weight: 600;
+}
+
+.rp-tab:focus-visible {
+	outline: 2px solid var(--cinnabar);
+	outline-offset: -2px;
+}
+
 .rp-tpl {
 	display: flex;
 	flex-wrap: wrap;
@@ -305,6 +342,54 @@
 	border-color: var(--cinnabar);
 	color: var(--cinnabar);
 	background: var(--ui-active-warm);
+}
+
+/* 控笔图案选择器：纯图形按钮（C1），无文字；右上角标图形字符（alias） */
+.rp-pattern-btn {
+	position: relative;
+	width: 38px;
+	height: 34px;
+	padding: 4px;
+	justify-content: center;
+}
+
+/* 右上角图形字符（alias）：aria-hidden 角标，不参与朗读 */
+.rp-pattern-alias {
+	position: absolute;
+	top: 1px;
+	right: 3px;
+	font-size: 9px;
+	line-height: 1;
+	opacity: .55;
+	pointer-events: none;
+}
+
+.rp-pattern-btn.is-active .rp-pattern-alias {
+	opacity: 1;
+}
+
+.rp-pattern-svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+/* 笔画库按钮：剪影 + 名称（比控笔纯图形按钮更宽更高） */
+.rp-pattern-btn.has-name {
+	width: 58px;
+	height: 46px;
+	padding: 4px 2px;
+	gap: 2px;
+}
+.rp-pattern-btn.has-name .rp-pattern-svg {
+	height: 22px;
+	flex: none;
+}
+.rp-pattern-name {
+	font-size: 10px;
+	line-height: 1.1;
+	white-space: nowrap;
+	opacity: .9;
 }
 
 .mini-grid {
@@ -371,6 +456,11 @@
 	border-color: var(--ink);
 }
 
+/* 描红「自动」= 同范字色减半透明度：整块半透明表示 */
+.rp-swatches button.is-trace-auto {
+	opacity: .5;
+}
+
 /* 字格样式选择器：图标（同源 zg SVG）+ 名称，避免文字在圆按钮内换行溢出 */
 .rp-zg-styles {
 	display: flex;
@@ -382,9 +472,9 @@
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 2px;
-	width: 52px;
-	padding: 4px 2px;
+	gap: 3px;
+	width: 66px;
+	padding: 5px 2px;
 	border: 1px solid var(--line);
 	border-radius: 6px;
 	background: var(--sheet);
@@ -401,8 +491,8 @@
 }
 
 .rp-zg-icon {
-	width: 30px;
-	height: 30px;
+	width: 44px;
+	height: 44px;
 	background-repeat: no-repeat;
 	background-position: center;
 	background-size: contain;
@@ -410,6 +500,68 @@
 
 .rp-zg-name {
 	white-space: nowrap;
+}
+
+/* 推荐搭配 chips */
+.rp-schemes {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.rp-scheme-btn {
+	padding: 5px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--sheet);
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--ink);
+}
+
+.rp-scheme-btn:hover {
+	border-color: var(--cinnabar);
+	color: var(--cinnabar);
+}
+
+/* 快捷形态当前态 */
+.rp-scheme-btn.is-active {
+	border-color: var(--cinnabar);
+	color: var(--cinnabar);
+	background: var(--ui-active-warm);
+}
+
+/* 恢复默认外观 */
+.rp-reset-btn {
+	padding: 5px 12px;
+	border: 1px dashed var(--line);
+	border-radius: 6px;
+	background: transparent;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--ink);
+}
+
+.rp-reset-btn:hover {
+	border-color: var(--cinnabar);
+	color: var(--cinnabar);
+}
+
+/* 字格颜色行：预设色板 + 原生取色器 */
+.rp-zg-colors {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.rp-color-input {
+	width: 40px;
+	height: 30px;
+	padding: 0;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: transparent;
+	cursor: pointer;
 }
 
 .rp-check {
@@ -553,6 +705,12 @@
 	margin: 4px 0 0;
 	font-size: 12px;
 	color: var(--ink-soft);
+}
+
+.rp-hint-link {
+	margin-left: 6px;
+	color: var(--cinnabar);
+	text-decoration: underline;
 }
 
 /* 重复字统计（T1.3） */
@@ -748,7 +906,19 @@
 
 .rp-preview {
 	flex: 1;
+	min-width: 0;
+	min-height: 0;
 	padding: 20px;
+	position: relative; /* 缩放条浮层定位基准 */
+	/* 纵向 flex：内层负责滚动，缩放条浮于其上不随内容滚动 */
+	display: flex;
+	flex-direction: column;
+}
+
+/* 纸张列表滚动区（打印时不滚动，尺寸由 @page 决定） */
+.rp-preview-scroll {
+	flex: 1;
+	min-height: 0;
 	overflow: auto;
 }
 
@@ -802,6 +972,96 @@
 	margin: 10px auto 0;
 	font-size: 12px;
 	color: var(--ink-soft);
+}
+
+/* 缩放条：右下角浮层（绝对定位；no-print 打印时隐藏） */
+.rp-zoombar {
+	position: absolute;
+	right: 32px;
+	bottom: 32px;
+	z-index: 25;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 4px;
+	background: var(--sheet);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	box-shadow: var(--shadow);
+}
+
+.rp-zoom-btn,
+.rp-zoom-pct,
+.rp-zoom-fit {
+	font: inherit;
+	color: var(--ink);
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+.rp-zoom-btn {
+	width: 28px;
+	height: 28px;
+	border-radius: 7px;
+	font-size: 16px;
+	line-height: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.rp-zoom-btn:hover:not(:disabled),
+.rp-zoom-pct:hover,
+.rp-zoom-fit:hover {
+	background: var(--ui-active-warm);
+	color: var(--cinnabar);
+}
+
+.rp-zoom-btn:disabled {
+	color: var(--ink-faint);
+	opacity: .5;
+	cursor: default;
+}
+
+.rp-zoom-pct {
+	min-width: 52px;
+	height: 28px;
+	padding: 0 6px;
+	border-radius: 7px;
+	font-size: 12px;
+	text-align: center;
+}
+
+/* fit 模式下百分比只是状态显示（手动接管后恢复可点） */
+.rp-zoom-pct.is-auto {
+	color: var(--ink-faint);
+}
+
+.rp-zoom-sep {
+	width: 1px;
+	height: 18px;
+	margin: 0 3px;
+	background: var(--line);
+}
+
+.rp-zoom-fit {
+	height: 28px;
+	padding: 0 10px;
+	border-radius: 7px;
+	font-size: 12px;
+	color: var(--ink-soft);
+}
+
+.rp-zoom-fit.is-active {
+	background: var(--ui-active-warm);
+	color: var(--cinnabar);
+	font-weight: 600;
+}
+
+.rp-zoombar button:focus-visible {
+	outline: 2px solid var(--cinnabar);
+	outline-offset: 1px;
 }
 
 /* 空内容引导：未输入时不渲染空页，给出开始路径（打印时随 no-print 隐藏） */
@@ -858,6 +1118,12 @@
 	.rp-preview {
 		display: block;
 		padding: 0;
+		overflow: visible;
+	}
+
+	/* 内层滚动区交回普通块流，尺寸由 @page 决定 */
+	.rp-preview-scroll {
+		display: block;
 		overflow: visible;
 	}
 

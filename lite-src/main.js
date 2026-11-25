@@ -4,7 +4,7 @@
  * - 预览区：点击字格放大（← / → 切换）；↑ / ↓ 逐字移动并高亮当前字
  * - ES5 语法、无外部网络请求、无动画；不依赖 CSS 变量（老浏览器兼容）
  * - 配置 / 内容模型 / 字格背景 / 字体：lite 本地独立副本（lite-src/vendor/，与 web/src/core 同源，
- *   改动共享逻辑时需同步两处）
+ *   改动共享逻辑时需同步两处；行为一致性由 test/lite-parity.test.mjs 差分测试锁定，勿手工漂移）
  */
 import './vendor/config.js';
 import './vendor/content.js';
@@ -51,13 +51,33 @@ import './vendor/font.js';
 			if (xhr.status !== 200) { box.style.display = 'none'; return; }
 			var data;
 			try { data = JSON.parse(xhr.responseText); } catch (e) { box.style.display = 'none'; return; }
-			var fonts = data && data.fonts ? data.fonts : [];
+			var fonts = normalizeFontList(data);
 			if (!fonts.length) { box.style.display = 'none'; return; }
 			renderFontList(box, fonts);
 			box.style.display = '';
 		};
 		xhr.onerror = function () { box.style.display = 'none'; };
 		try { xhr.send(); } catch (e) { box.style.display = 'none'; }
+	}
+
+	/* 归一化网络字体清单：Go 服务返回 {user:[{id,name,size}]}，
+	 * 字体地址统一为 /api/fonts/file/<id>；兼容旧 {fonts:[{name,url,...}]} 形状。 */
+	function normalizeFontList(data) {
+		if (!data) return [];
+		if (data.user && data.user.length) {
+			var out = [];
+			for (var i = 0; i < data.user.length; i++) {
+				var u = data.user[i];
+				if (!u || !u.id) continue;
+				out.push({
+					name: u.name || ('字体 ' + (i + 1)),
+					size: u.size || 0,
+					url: '/api/fonts/file/' + encodeURIComponent(u.id)
+				});
+			}
+			return out;
+		}
+		return data.fonts || [];
 	}
 
 	function renderFontList(box, fonts) {
@@ -191,7 +211,10 @@ import './vendor/font.js';
 		box.style.height = size + 'px';
 		box.style.lineHeight = Math.round(size * 1.06) + 'px';
 		box.style.fontSize = Math.round(size * 0.725) + 'px';
-		box.style.backgroundImage = Z.getZgBackground(Z.Config.ZgType, FIXED.zgColor);
+		/* 精简版固定灰色字格：忽略盘上残留的自定义颜色（与完整版共用 zitie.config 键） */
+		box.style.backgroundImage = Z.getZgBackground(Z.resolveZgOptions(Object.assign({}, Z.Config, {
+			ZgColor: FIXED.zgColor, ZgLineColor: '', ZgBorderColor: ''
+		})));
 		box.style.backgroundSize = size + 'px ' + size + 'px';
 	}
 
@@ -407,7 +430,10 @@ import './vendor/font.js';
 		box.style.height = size + 'px';
 		box.style.lineHeight = Math.round(size * 1.06) + 'px';
 		box.style.fontSize = Math.round(size * 0.72) + 'px';
-		box.style.backgroundImage = Z.getZgBackground(Z.Config.ZgType, FIXED.zgColor);
+		/* 精简版固定灰色字格：忽略盘上残留的自定义颜色（与完整版共用 zitie.config 键） */
+		box.style.backgroundImage = Z.getZgBackground(Z.resolveZgOptions(Object.assign({}, Z.Config, {
+			ZgColor: FIXED.zgColor, ZgLineColor: '', ZgBorderColor: ''
+		})));
 		box.style.backgroundSize = size + 'px ' + size + 'px';
 		box.style.color = 'rgba(' + FIXED.inkRgb + ', ' + FIXED.inkAlpha + ')';
 		setText(box, ch);
