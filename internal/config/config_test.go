@@ -11,13 +11,18 @@ import (
 	"testing"
 )
 
-/* 每个用例独立配置目录。darwin 的 os.UserConfigDir 取
- * $HOME/Library/Application Support，故重定向 HOME。 */
+/* 每个用例独立配置目录：重定向 HOME（darwin / linux 均据此推导），并清掉
+ * XDG_CONFIG_HOME 保证确定性；随后取 AppConfigDir() 的真实返回值，
+ * 不假设具体平台的目录布局。 */
 func useTempDir(t *testing.T) string {
 	t.Helper()
-	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
-	return filepath.Join(home, "Library", "Application Support", appName)
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	t.Setenv("XDG_CONFIG_HOME", "")
+	dir, err := AppConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 /* 默认值必须与前端 web/src/core/config.js DEFAULTS 逐字段一致（三处一致性的 Go 侧保障；
