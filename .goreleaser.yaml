@@ -43,6 +43,9 @@ builds:
       - -s -w
       - -H=windowsgui
       - -X main.Version={{ .Version }}
+      - -X motie/internal/version.Version={{ .Version }}
+      - -X motie/internal/version.GitCommit={{ .FullCommit }}
+      - -X motie/internal/version.BuildDate={{ .Date }}
 
   # ---- Linux ----
   - id: motie-linux
@@ -58,6 +61,9 @@ builds:
     ldflags:
       - -s -w
       - -X main.Version={{ .Version }}
+      - -X motie/internal/version.Version={{ .Version }}
+      - -X motie/internal/version.GitCommit={{ .FullCommit }}
+      - -X motie/internal/version.BuildDate={{ .Date }}
 
 archives:
   - id: motie

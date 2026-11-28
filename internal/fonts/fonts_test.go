@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,5 +142,38 @@ func TestRenameAndSafeID(t *testing.T) {
 	}
 	if _, _, err := svc.File("../../etc/passwd"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("危险 id 应 ErrNotFound，实际 %v", err)
+	}
+}
+
+func TestUpdateTags(t *testing.T) {
+	svc := newTestService(t)
+	e, err := svc.Add("标签字体", ".otf", []byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	/* trim / 去空 / 去重 */
+	if err := svc.UpdateTags(e.ID, []string{" 楷书 ", "", "楷书", "行草"}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := svc.ListUser()
+	if len(list[0].Tags) != 2 || list[0].Tags[0] != "楷书" || list[0].Tags[1] != "行草" {
+		t.Fatalf("tags = %v", list[0].Tags)
+	}
+	/* 上限：单标签截断到 20 runes，总个数封顶 8 */
+	long := strings.Repeat("长", 30)
+	many := make([]string, 12)
+	for i := range many {
+		many[i] = "t" + string(rune('a'+i))
+	}
+	if err := svc.UpdateTags(e.ID, append([]string{long}, many...)); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = svc.ListUser()
+	if len(list[0].Tags) != maxFontTags || len([]rune(list[0].Tags[0])) != maxTagRunes {
+		t.Fatalf("tags = %v", list[0].Tags)
+	}
+	/* 未知 id */
+	if err := svc.UpdateTags("fzzzzzzzz", []string{"x"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未知 id 应 ErrNotFound，实际 %v", err)
 	}
 }

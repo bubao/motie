@@ -8,11 +8,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import * as Z from '../web/src/core/index.js';
-import { store, resetConfig, pushToast, dismissToast, setField, setContent, importConfig, setFontSource, replaceHan, resetHistory, undoContent, redoContent, switchMode, applyFields } from '../web/src/store.js';
+import { store, resetConfig, pushToast, dismissToast, setField, setContent, importConfig, setFontSource, replaceHan, resetHistory, undoContent, redoContent, switchMode, applyFields, setBackendMode } from '../web/src/store.js';
 import { ToastHost } from '../web/src/ToastHost.jsx';
 import { Preview } from '../web/src/Preview.jsx';
 import { BigPreview } from '../web/src/BigPreview.jsx';
 import { Panel } from '../web/src/Panel.jsx';
+import { sharedClient } from '../web/src/ipc/client.ts';
 import { usePrint } from '../web/src/usePrint.js';
 
 function renderWithStore(ui) {
@@ -22,7 +23,7 @@ function renderWithStore(ui) {
 /* 组件已改用 core ESM（P4）：assets / pinyin / stroke-order 通过 vi.mock 注入测试替身，
  * 避免 jsdom 真实网络加载与 HanziWriter 依赖。*/
 var mockState = vi.hoisted(function () {
-	return { playCalls: 0, statusText: 'CDN 模式（测试）。' };
+	return { playCalls: 0, playResult: false, statusText: 'CDN 模式（测试）。', pinyinFails: false };
 });
 
 vi.mock('../web/src/core/assets.js', function () {
@@ -47,8 +48,19 @@ vi.mock('../web/src/core/assets.js', function () {
 
 vi.mock('../web/src/core/pinyin.js', function () {
 	return {
-		loadPinyin: function () { return Promise.resolve(); },
+		loadPinyin: function () { return mockState.pinyinFails ? Promise.reject(new Error('offline')) : Promise.resolve(); },
 		getPinyin: function (c) { return c === '永' ? 'yǒng' : ''; },
+		/* 行级语境取音替身：单字路径不认识的「长」在词中读 zhǎng */
+		getLinePinyins: function (cells) {
+			return (cells || []).map(function (c) {
+				if (!c || !c.char) return '';
+				if (c.char === '长') return 'zhǎng';
+				if (c.char === '大') return 'dà';
+				if (c.char === '永') return 'yǒng';
+				return '';
+			});
+		},
+		getPinyinArray: function () { return []; },
 		resetPinyin: function () {},
 		isPinyinReady: function () { return true; }
 	};
@@ -57,7 +69,7 @@ vi.mock('../web/src/core/pinyin.js', function () {
 vi.mock('../web/src/core/stroke-order.js', function () {
 	return {
 		Stroke: {
-			play: function () { mockState.playCalls++; return false; },
+			play: function () { mockState.playCalls++; return mockState.playResult; },
 			destroy: function () {}
 		}
 	};
@@ -100,8 +112,17 @@ beforeEach(function () {
 	fontMem = {};
 	fontMeta = [];
 	mockState.playCalls = 0;
+	mockState.playResult = false;
+	mockState.pinyinFails = false;
 	mqState.matches = false;
 	mqState.listeners = [];
+	/* 共享 MockTransport 的内存态按用例清空，避免文档条目跨用例残留 */
+	var sc = sharedClient();
+	if (sc.transport.kind === 'mock') {
+		sc.transport.documents.length = 0;
+		sc.transport.recent.length = 0;
+		sc.transport.files.clear();
+	}
 	try { window.localStorage.removeItem('zitie.fonts'); } catch (e) { /* 忽略 */ }
 	try { window.localStorage.removeItem('zitie.presets'); } catch (e) { /* 忽略 */ }
 	store.dispatch(resetConfig());
@@ -243,6 +264,53 @@ describe('BigPreview', function () {
 			if (rendered) rendered.unmount();
 		}
 	});
+
+	it('无笔顺数据时播放按钮禁用并提示原因（U4）', function () {
+		var rendered = null;
+		try {
+			rendered = render(<BigPreview char="永" strokeAnim={false} zg="" onClose={function () {}} />);
+			var btn = document.querySelector('.overlay-actions button');
+			expect(btn.disabled).toBe(true);
+			expect(btn.getAttribute('title')).toContain('暂无笔顺数据');
+			fireEvent.click(btn);
+			expect(mockState.playCalls).toBe(0);
+		} finally {
+			if (rendered) rendered.unmount();
+		}
+	});
+
+	it('Esc 关闭并返还焦点到触发元素（统一 useFocusTrap · U4）', async function () {
+		var trigger = document.createElement('button');
+		trigger.textContent = '触发';
+		document.body.appendChild(trigger);
+		trigger.focus();
+		var closed = 0;
+		var rendered = null;
+		try {
+			rendered = render(<BigPreview char="永" strokeAnim={true} zg="" onClose={function () { closed++; }} />);
+			await waitFor(function () { expect(document.querySelector('.overlay.is-open')).toBeTruthy(); });
+			fireEvent.keyDown(document, { key: 'Escape' });
+			expect(closed).toBe(1);
+			expect(document.activeElement).toBe(trigger);
+		} finally {
+			if (rendered) rendered.unmount();
+			trigger.remove();
+		}
+	});
+
+	it('播放中显示 spinner 文案（忙碌态与导出链一致 · U4）', async function () {
+		mockState.playResult = true;
+		var rendered = null;
+		try {
+			rendered = render(<BigPreview char="永" strokeAnim={true} zg="" onClose={function () {}} />);
+			var btn = document.querySelector('.overlay-actions button');
+			fireEvent.click(btn);
+			await waitFor(function () { expect(btn.querySelector('.rp-spinner')).toBeTruthy(); });
+			expect(btn.textContent).toContain('播放中…');
+		} finally {
+			if (rendered) rendered.unmount();
+		}
+	});
 });
 
 describe('Preview', function () {
@@ -340,6 +408,60 @@ describe('Preview', function () {
 		});
 		expect(container.querySelector('.rp-page-no').textContent).not.toContain('第 1 /');
 		expect(container.querySelector('.rp-meta')).not.toBeNull();
+	});
+
+	it('多音字按行语境取音：预览使用 getLinePinyins 而非单字查询', function () {
+		act(function () {
+			store.dispatch(setContent('长大'));
+			store.dispatch(setField({ key: 'ZgType', value: '5' }));
+		});
+		var rendered = renderWithStore(<Preview pinyinReady={true} />);
+		var pys = Array.prototype.map.call(
+			rendered.container.querySelectorAll('.cell-pinyin'),
+			function (el) { return el.textContent; }
+		);
+		expect(pys).toContain('zhǎng');
+		expect(pys).toContain('dà');
+	});
+
+	it('得分栏：ShowScore 开启后页脚出现「得分」，默认不渲染', function () {
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var container = rendered.container;
+		expect(container.querySelector('.rp-page-no').textContent).not.toContain('得分');
+		act(function () {
+			store.dispatch(setField({ key: 'ShowScore', value: true }));
+		});
+		expect(container.querySelector('.rp-page-no').textContent).toContain('得分：＿＿＿＿');
+		act(function () {
+			store.dispatch(setField({ key: 'ShowScore', value: false }));
+		});
+		expect(container.querySelector('.rp-page-no').textContent).not.toContain('得分');
+	});
+
+	it('输出页提供「显示得分栏」开关，联动配置', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		var box = rendered.container.querySelector('#showScore');
+		expect(box).not.toBeNull();
+		fireEvent.click(box);
+		expect(store.getState().config.ShowScore).toBe(true);
+	});
+
+	it('落款（B4）：输出页开关 + 文本输入联动配置；留空不显示输入框', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		var box = rendered.container.querySelector('#showSignature');
+		expect(box).not.toBeNull();
+		expect(rendered.container.querySelector('#signatureText')).toBeNull(); /* 未开启不显示输入 */
+		fireEvent.click(box);
+		expect(store.getState().config.ShowSignature).toBe(true);
+		var input = rendered.container.querySelector('#signatureText');
+		expect(input).not.toBeNull();
+		fireEvent.change(input, { target: { value: '甲辰年冬月书于灯下' } });
+		expect(store.getState().config.SignatureText).toBe('甲辰年冬月书于灯下');
+		fireEvent.click(box); /* 关闭后输入框消失，文本保留待再开 */
+		expect(rendered.container.querySelector('#signatureText')).toBeNull();
+		expect(store.getState().config.SignatureText).toBe('甲辰年冬月书于灯下');
 	});
 
 	it('标点不占格：跟随前字渲染 .hz-mark', function () {
@@ -460,8 +582,8 @@ describe('Preview', function () {
 		fireEvent.click(input);
 		act(function () { vi.advanceTimersByTime(250); });
 		expect(document.querySelector('.hz-edit').value).toBe('红');
-		/* 字格无障碍语义：单击编辑 / 双击放大 */
-		expect(cell.getAttribute('aria-label')).toBe('编辑 永，双击放大查看');
+		/* 字格无障碍语义：单击编辑 / 双击或按空格放大（文案与 onCellKeyDown 的 Space 行为一致） */
+		expect(cell.getAttribute('aria-label')).toBe('编辑 永，双击或按空格放大查看');
 	});
 
 	it('双击字格打开放大预览，并取消待定单击编辑（P3-18）', function () {
@@ -715,6 +837,30 @@ describe('Preview', function () {
 		act(function () { store.dispatch(setField({ key: 'Margin', value: { top: 20, right: 20, bottom: 20, left: 20 } })); });
 		expect(el.textContent).toContain('margin: 20mm 20mm 20mm 20mm');
 		expect(el.textContent).toContain('--print-mb-px: 75.59');
+	});
+
+	it('落款行（B4）：开启 + 有文本 → 每页渲染；关闭或留空 → 不渲染', function () {
+		act(function () {
+			store.dispatch(setField({ key: 'ShowSignature', value: true }));
+			store.dispatch(setField({ key: 'SignatureText', value: '甲辰年冬月书于灯下' }));
+		});
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var pages = rendered.container.querySelectorAll('.rp-page');
+		expect(pages.length).toBeGreaterThan(0);
+		var sigs = rendered.container.querySelectorAll('.sheet-signature');
+		expect(sigs).toHaveLength(pages.length); /* 每页一条 */
+		expect(sigs[0].textContent).toBe('甲辰年冬月书于灯下');
+
+		/* 留空按未开启处理 */
+		act(function () { store.dispatch(setField({ key: 'SignatureText', value: '' })); });
+		expect(rendered.container.querySelector('.sheet-signature')).toBeNull();
+
+		/* 关闭开关同样不渲染 */
+		act(function () {
+			store.dispatch(setField({ key: 'SignatureText', value: '乙巳年春月' }));
+			store.dispatch(setField({ key: 'ShowSignature', value: false }));
+		});
+		expect(rendered.container.querySelector('.sheet-signature')).toBeNull();
 	});
 });
 
@@ -1300,6 +1446,23 @@ describe('窄屏抽屉（P1-4）', function () {
 		expect(panel.getAttribute('aria-hidden')).toBeNull();
 	});
 
+	it('点遮罩关闭抽屉（U2：遮罩只盖预览区，不拦 rail / 顶栏）', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="layout"]'));
+		expect(rendered.container.querySelector('.rp-panel').className).toContain('is-open');
+		fireEvent.click(rendered.container.querySelector('.rp-panel-scrim'));
+		expect(rendered.container.querySelector('.rp-panel').className).not.toContain('is-open');
+	});
+
+	it('抽屉打开时切换分类保持展开（U2：rail 常驻可点）', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="layout"]'));
+		fireEvent.click(rendered.container.querySelector('[data-page="grid"]'));
+		var panel = rendered.container.querySelector('.rp-panel');
+		expect(panel.className).toContain('is-open');
+		expect(panel.querySelector('.rp-page-head h2').textContent).toBe('字格');
+	});
+
 	it('Esc 关闭抽屉并返还焦点到触发按钮', function () {
 		var rendered = renderWithStore(<Panel />);
 		var btn = rendered.container.querySelector('[data-page="grid"]');
@@ -1444,8 +1607,8 @@ describe('无障碍（P2-10）', function () {
 
 describe('信息架构（P2-7）', function () {
 	it('输出页含导出 PDF / 打印，导出回调生效', function () {
-		/* 桌面环境（内核注入标记）下导出可用；纯浏览器入口已置灰 */
-		window.__MOTIE_DESKTOP__ = true;
+		/* 接入模式读 ui.backend（U6）：在线时导出可用；本地模式入口置灰 */
+		act(function () { store.dispatch(setBackendMode('http')); });
 		try {
 			var onExport = vi.fn();
 			renderWithStore(<Panel onExportPdf={onExport} pdfBusy={false} />);
@@ -1454,17 +1617,17 @@ describe('信息架构（P2-7）', function () {
 			expect(onExport).toHaveBeenCalledTimes(1);
 			expect(screen.getByRole('button', { name: '打印' })).toBeTruthy();
 		} finally {
-			delete window.__MOTIE_DESKTOP__;
+			act(function () { store.dispatch(setBackendMode('mock')); });
 		}
 	});
 
 	it('非桌面环境导出 PDF 入口置灰并有提示', function () {
-		delete window.__MOTIE_DESKTOP__;
+		act(function () { store.dispatch(setBackendMode('mock')); });
 		renderWithStore(<Panel onExportPdf={vi.fn()} pdfBusy={false} />);
 		fireEvent.click(screen.getByRole('button', { name: '输出' }));
 		var btn = screen.getByRole('button', { name: '导出 PDF' });
 		expect(btn.disabled).toBe(true);
-		expect(btn.getAttribute('title')).toContain('仅在桌面版可用');
+		expect(btn.getAttribute('title')).toContain('需连接桌面内核');
 	});
 
 	it('生成中导出按钮禁用', function () {
@@ -1473,9 +1636,85 @@ describe('信息架构（P2-7）', function () {
 		expect(screen.getByRole('button', { name: '正在生成 PDF…' }).disabled).toBe(true);
 	});
 
-	it('示例库默认展开，无需二次点击', function () {
+	it('示例库（A1）：搜索 / 分类筛选 / 点击套用 / 空态', function () {
+		try { window.localStorage.removeItem(Z.SAMPLE_FAVS_KEY); } catch (e) { /* 忽略 */ }
 		renderWithStore(<Panel />);
-		expect(document.getElementById('sampleSelect')).toBeTruthy();
+		var foldOf = function () {
+			return Array.prototype.filter.call(
+				document.querySelectorAll('.rp-fold'),
+				function (f) { return f.querySelector('summary').textContent.indexOf('示例库') !== -1; }
+			)[0];
+		};
+		var fold = foldOf();
+		expect(fold).toBeTruthy();
+		var search = document.getElementById('sampleSearch');
+		var list = fold.querySelector('.rp-sample-list');
+		var total = list.querySelectorAll('.rp-sample-item').length;
+		expect(total).toBeGreaterThan(0);
+
+		/* 搜索：按名称或内容关键词过滤 */
+		fireEvent.change(search, { target: { value: '春' } });
+		var hits = list.querySelectorAll('.rp-sample-item');
+		expect(hits.length).toBeGreaterThan(0);
+		expect(hits.length).toBeLessThan(total);
+		Array.prototype.forEach.call(hits, function (item) {
+			expect(item.textContent).toContain('春');
+		});
+		fireEvent.change(search, { target: { value: '' } });
+		expect(list.querySelectorAll('.rp-sample-item').length).toBe(total);
+
+		/* 分类 chips：选「词语」后只剩词语类，切回「全部」恢复 */
+		var catBtn = Array.prototype.filter.call(fold.querySelectorAll('.rp-sample-cat'), function (b) {
+			return b.textContent === '词语';
+		})[0];
+		expect(catBtn).toBeTruthy();
+		fireEvent.click(catBtn);
+		var words = list.querySelectorAll('.rp-sample-item');
+		expect(words.length).toBeGreaterThan(0);
+		expect(words.length).toBeLessThan(total);
+		Array.prototype.forEach.call(words, function (item) {
+			expect(item.querySelector('.rp-sample-name').textContent).toMatch(/词语/);
+		});
+		fireEvent.click(Array.prototype.filter.call(fold.querySelectorAll('.rp-sample-cat'), function (b) {
+			return b.textContent === '全部';
+		})[0]);
+		expect(list.querySelectorAll('.rp-sample-item').length).toBe(total);
+
+		/* 点击主体套用内容 */
+		var main = list.querySelector('.rp-sample-main');
+		fireEvent.click(main);
+		expect(store.getState().config.Content).toBe(main.getAttribute('title'));
+
+		/* 空态提示 */
+		fireEvent.change(search, { target: { value: '不存在的关键词xyz' } });
+		expect(fold.textContent).toContain('无匹配示例');
+	});
+
+	it('示例库（A1）：收藏写入本地并置顶，可取消', function () {
+		try { window.localStorage.removeItem(Z.SAMPLE_FAVS_KEY); } catch (e) { /* 忽略 */ }
+		var rendered = renderWithStore(<Panel />);
+		var foldOf = function () {
+			return Array.prototype.filter.call(
+				document.querySelectorAll('.rp-fold'),
+				function (f) { return f.querySelector('summary').textContent.indexOf('示例库') !== -1; }
+			)[0];
+		};
+		var list = foldOf().querySelector('.rp-sample-list');
+		var secondName = list.querySelectorAll('.rp-sample-name')[1].textContent;
+		fireEvent.click(list.querySelectorAll('.rp-sample-star')[1]);
+		expect(JSON.parse(window.localStorage.getItem(Z.SAMPLE_FAVS_KEY))).toEqual([secondName]);
+
+		/* 重新挂载读回本地收藏，收藏项置顶 */
+		rendered.unmount();
+		renderWithStore(<Panel />);
+		var list2 = foldOf().querySelector('.rp-sample-list');
+		expect(list2.querySelector('.rp-sample-name').textContent).toBe(secondName);
+		expect(list2.querySelector('.rp-sample-star').getAttribute('aria-pressed')).toBe('true');
+
+		/* 再点取消收藏，本地同步移除 */
+		fireEvent.click(list2.querySelector('.rp-sample-star'));
+		expect(JSON.parse(window.localStorage.getItem(Z.SAMPLE_FAVS_KEY))).toEqual([]);
+		try { window.localStorage.removeItem(Z.SAMPLE_FAVS_KEY); } catch (e) { /* 忽略 */ }
 	});
 
 	it('更多页首屏为设置导入导出', function () {
@@ -1539,5 +1778,789 @@ describe('笔画模式', function () {
 		expect(cell.textContent).toBe('');
 		fireEvent.click(cell);
 		expect(rendered.container.querySelector('.hz-edit')).toBeNull();
+	});
+});
+
+describe('分享链接（doc/next-features-todo.md · A1 / D4）', function () {
+	beforeEach(function () {
+		store.dispatch(resetHistory());
+	});
+
+	it('输出页「分享链接」：复制含 #s= 的链接并弹成功提示', async function () {
+		var writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(window.navigator, 'clipboard', {
+			value: { writeText: writeText }, configurable: true
+		});
+		act(function () { store.dispatch(setContent('天地玄黄')); });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		fireEvent.click(screen.getByRole('button', { name: '分享链接' }));
+		await waitFor(function () { expect(writeText).toHaveBeenCalled(); });
+		var url = String(writeText.mock.calls[0][0]);
+		expect(url).toContain('#s=');
+		/* 链接自洽：解回来的内容与当前输入一致 */
+		var fields = Z.decodeShare(url.slice(url.indexOf('#')));
+		expect(fields.Content).toBe('天地玄黄');
+		expect(store.getState().ui.toasts.some(function (t) { return t.type === 'success'; })).toBe(true);
+	});
+
+	it('超长内容：不写剪贴板，提示改用导出 JSON', async function () {
+		var writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(window.navigator, 'clipboard', {
+			value: { writeText: writeText }, configurable: true
+		});
+		act(function () { store.dispatch(setContent('永'.repeat(5000))); });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		fireEvent.click(screen.getByRole('button', { name: '分享链接' }));
+		await waitFor(function () { expect(store.getState().ui.toasts.length).toBeGreaterThan(0); });
+		expect(writeText).not.toHaveBeenCalled();
+		expect(store.getState().ui.toasts.some(function (t) { return t.text.indexOf('导出 JSON') >= 0; })).toBe(true);
+	});
+});
+
+describe('字体授权提示（web-features.md · C2）', function () {
+	it('本地字体区展示固定合规提醒', function () {
+		fontMeta = [{ id: 'f1', name: '楷体', size: 2048, createdAt: 1 }];
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '文字' }));
+		expect(document.body.textContent).toContain('请仅导入您有权使用的字体');
+	});
+});
+
+
+describe('打印范围（web-features.md · D3）', function () {
+	it('输出页提供范围输入；修改触发回调，留空为全部', function () {
+		var spy = vi.fn();
+		var rendered = renderWithStore(<Panel printRangeValue="" onPrintRangeChange={spy} />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		var input = document.getElementById('printRange');
+		expect(input).toBeTruthy();
+		expect(input.getAttribute('placeholder')).toContain('1,3-5');
+		fireEvent.change(input, { target: { value: '2' } });
+		expect(spy).toHaveBeenCalledWith('2');
+	});
+});
+
+
+describe('分享二维码（web-features.md · D4）', function () {
+	it('输出页生成并展示浮层；关闭可退出', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		fireEvent.click(screen.getByRole('button', { name: '分享二维码' }));
+		expect(screen.getByRole('dialog', { name: '分享二维码' })).toBeTruthy();
+		expect(document.querySelector('.rp-shareqr-canvas')).toBeTruthy();
+		expect(document.body.textContent).toContain('扫码打开字帖');
+		fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+		expect(screen.queryByRole('dialog', { name: '分享二维码' })).toBeNull();
+	});
+});
+
+
+describe('无障碍（U1）', function () {
+	it('跳转链接：首 Tab 可达字帖预览区（skip link → #rp-main）', async function () {
+		var mod = await import('../web/src/App.jsx');
+		var rendered = renderWithStore(React.createElement(mod.default));
+		var link = document.querySelector('.rp-skip-link');
+		expect(link).toBeTruthy();
+		expect(link.getAttribute('href')).toBe('#rp-main');
+		var main = document.getElementById('rp-main');
+		expect(main).toBeTruthy();
+		expect(main.getAttribute('tabindex')).toBe('-1');
+		rendered.unmount();
+	});
+
+	it('分享二维码浮层：aria-modal + 初始聚焦关闭按钮，Esc 关闭并返还焦点', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="output"]'));
+		var trigger = screen.getByRole('button', { name: '分享二维码' });
+		fireEvent.click(trigger);
+		var dialog = screen.getByRole('dialog', { name: '分享二维码' });
+		expect(dialog.getAttribute('aria-modal')).toBe('true');
+		expect(document.activeElement && document.activeElement.className.indexOf('rp-shareqr-close') >= 0).toBe(true);
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(screen.queryByRole('dialog', { name: '分享二维码' })).toBeNull();
+		/* 焦点返还触发按钮 */
+		expect(document.activeElement === trigger || document.activeElement === document.body).toBe(true);
+	});
+
+	it('预设导入浮层：打开聚焦文本域，Esc 关闭', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '版式' }));
+		fireEvent.click(screen.getByRole('button', { name: '导入…' }));
+		var dialog = screen.getByRole('dialog', { name: '导入预设' });
+		expect(dialog.getAttribute('aria-modal')).toBe('true');
+		expect(document.activeElement === document.getElementById('presetImportText')).toBe(true);
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(screen.queryByRole('dialog', { name: '导入预设' })).toBeNull();
+	});
+});
+
+describe('按字数截取（web-features.md · A3）', function () {
+	it('内容工具中输入 N 字并截取，覆盖 Content 并入历史', function () {
+		var rendered = renderWithStore(<Panel />);
+		act(function () { store.dispatch(setField({ key: 'Content', value: '天地玄黄宇宙洪荒' })); });
+		fireEvent.click(rendered.container.querySelector('[data-page="content"]'));
+		fireEvent.click(screen.getByText('内容工具'));
+		fireEvent.change(document.getElementById('truncateCount'), { target: { value: '5' } });
+		fireEvent.click(screen.getByRole('button', { name: '截取' }));
+		expect(store.getState().config.Content.length).toBe(5);
+		expect(store.getState().ui.toasts.some(function (t) { return t.text.indexOf('已截取前 5 字') >= 0; })).toBe(true);
+	});
+});
+
+
+describe('字体增强（F-a~c）', function () {
+	function fontNames() {
+		return Array.prototype.map.call(
+			document.querySelectorAll('.rp-font-list .rp-font-name'),
+			function (el) { return el.textContent; },
+		);
+	}
+
+	it('F-b 搜索按名称过滤、排序切换生效', function () {
+		fontMeta = [
+			{ id: 'f1', name: '楷体', size: 2048, createdAt: 1 },
+			{ id: 'f2', name: '宋体', size: 4096, createdAt: 2 },
+		];
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '文字' }));
+		expect(fontNames()).toEqual(['楷体', '宋体']);
+		fireEvent.change(document.getElementById('fontSearch'), { target: { value: '楷' } });
+		expect(fontNames()).toEqual(['楷体']);
+		/* 清空搜索后恢复；切「按大小」大的在前 */
+		fireEvent.change(document.getElementById('fontSearch'), { target: { value: '' } });
+		fireEvent.change(document.getElementById('fontSort'), { target: { value: 'size' } });
+		expect(fontNames()).toEqual(['宋体', '楷体']);
+		/* 「没有匹配的字体」空态提示 */
+		fireEvent.change(document.getElementById('fontSearch'), { target: { value: '不存在的字体' } });
+		expect(document.body.textContent).toContain('没有匹配的字体');
+		/* 无障碍：搜索框与排序下拉都有可访问名（axe select-name / label 回归） */
+		expect(document.getElementById('fontSearch').getAttribute('aria-label')).toBe('搜索字体名');
+		expect(document.getElementById('fontSort').getAttribute('aria-label')).toBe('排序方式');
+	});
+
+	it('F-a 行内编辑标签并保存；标签 chips 可筛选', async function () {
+		fontMeta = [
+			{ id: 'f1', name: '楷体', size: 2048, createdAt: 1, tags: ['楷书'] },
+			{ id: 'f2', name: '宋体', size: 1024, createdAt: 2, tags: [] },
+		];
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '文字' }));
+		/* 已有标签以 chip 展示 */
+		expect(document.querySelector('.rp-font-tags-line .rp-font-tag').textContent).toBe('楷书');
+		/* 筛选 chips 中「全部」高亮，「楷书」可点 */
+		var filterChips = document.querySelectorAll('.rp-font-tags:not(.rp-font-tags-line) .rp-font-tag');
+		expect(filterChips.length).toBe(2);
+		fireEvent.click(filterChips[1]);
+		expect(fontNames()).toEqual(['楷体']);
+		fireEvent.click(filterChips[0]); /* 回到全部 */
+		expect(fontNames().length).toBe(2);
+		/* 行内编辑 */
+		fireEvent.click(screen.getAllByRole('button', { name: '标签' })[0]);
+		var input = document.getElementById('font-tags-f1');
+		fireEvent.change(input, { target: { value: '楷书，行草' } });
+		fireEvent.click(screen.getByRole('button', { name: '确定' }));
+		await waitFor(function () {
+			expect(fontMeta[0].tags).toEqual(['楷书', '行草']);
+		});
+	});
+
+	it('F-c 批量导入：成功汇总 + 失败清单均可见', async function () {
+		renderWithStore(<div><Panel /><ToastHost /></div>);
+		fireEvent.click(screen.getByRole('button', { name: '文字' }));
+		var fileInput = document.querySelector('input[type="file"][accept*=".ttf"]');
+		var good = new File([new Uint8Array([1, 2, 3])], '新字体.ttf', { type: 'font/ttf' });
+		var bad = new File([new Uint8Array([1])], '说明.txt', { type: 'text/plain' });
+		fireEvent.change(fileInput, { target: { files: [good, bad] } });
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('已导入 1 个字体');
+		});
+		expect(document.body.textContent).toContain('格式不支持');
+		expect(fontMeta.length).toBe(1);
+		expect(fontMeta[0].name).toBe('新字体');
+	});
+});
+
+describe('字帖页（M1）', function () {
+	it('无内容源时空态引导', async function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('还没有字帖');
+		});
+	});
+
+	it('另存为：把当前内容写为工作区字帖并立即出现在列表', async function () {
+		act(function () { store.dispatch(setContent('天地玄黄，宇宙洪荒。')); });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(screen.getByRole('button', { name: '另存为…' })).toBeTruthy();
+		});
+		fireEvent.click(screen.getByRole('button', { name: '另存为…' }));
+		fireEvent.change(document.getElementById('docSaveName'), { target: { value: '测试字帖' } });
+		fireEvent.click(screen.getByRole('button', { name: '保存' }));
+		await waitFor(function () {
+			expect(sharedClient().transport.files.get('workspace/测试字帖.txt').content).toBe('天地玄黄，宇宙洪荒。');
+		});
+		expect(store.getState().config.Title).toBe('测试字帖');
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('测试字帖');
+		});
+	});
+
+	it('另存为同名：先出现覆盖确认，确认后才替换内容', async function () {
+		await sharedClient().writeFile({ path: 'workspace/测试.txt', content: '旧内容' });
+		act(function () { store.dispatch(setContent('新内容')); });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(screen.getByRole('button', { name: '另存为…' })).toBeTruthy();
+		});
+		fireEvent.click(screen.getByRole('button', { name: '另存为…' }));
+		fireEvent.change(document.getElementById('docSaveName'), { target: { value: '测试.txt' } });
+		fireEvent.click(screen.getByRole('button', { name: '保存' }));
+		/* 第一次点保存只是要求确认，不应写入 */
+		expect(sharedClient().transport.files.get('workspace/测试.txt').content).toBe('旧内容');
+		await waitFor(function () {
+			expect(screen.getByRole('button', { name: '确认覆盖' })).toBeTruthy();
+		});
+		fireEvent.click(screen.getByRole('button', { name: '确认覆盖' }));
+		await waitFor(function () {
+			expect(sharedClient().transport.files.get('workspace/测试.txt').content).toBe('新内容');
+		});
+	});
+
+	it('打开…：选择本机 txt/md 后载入内容并落盘入库', async function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(screen.getByRole('button', { name: '打开…' })).toBeTruthy();
+		});
+		var fileInput = document.querySelector('input[type="file"][accept*="text/plain"]');
+		expect(fileInput).toBeTruthy();
+		var file = new File(['春眠不觉晓，处处闻啼鸟。'], '春晓.md', { type: 'text/markdown' });
+		fireEvent.change(fileInput, { target: { files: [file] } });
+		await waitFor(function () {
+			expect(store.getState().config.Content).toBe('春眠不觉晓，处处闻啼鸟。');
+		});
+		expect(store.getState().config.Title).toBe('春晓');
+		await waitFor(function () {
+			expect(sharedClient().transport.files.get('workspace/春晓.md').content).toBe('春眠不觉晓，处处闻啼鸟。');
+		});
+	});
+
+	it('搜索：按标题过滤列表', async function () {
+		await sharedClient().writeFile({ path: 'workspace/春晓.txt', content: '春眠不觉晓' });
+		await sharedClient().writeFile({ path: 'workspace/登鹳雀楼.md', content: '白日依山尽' });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('春晓');
+			expect(document.body.textContent).toContain('登鹳雀楼');
+		});
+		fireEvent.change(document.getElementById('docsSearch'), { target: { value: '春晓' } });
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('春晓');
+			expect(document.body.textContent.indexOf('登鹳雀楼')).toBe(-1);
+		});
+		fireEvent.change(document.getElementById('docsSearch'), { target: { value: '' } });
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('登鹳雀楼');
+		});
+	});
+
+	it('重命名：仅改列表标题，文件名不变', async function () {
+		await sharedClient().writeFile({ path: 'workspace/春晓.txt', content: '春眠不觉晓' });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('春晓');
+		});
+		fireEvent.click(screen.getByRole('button', { name: '改名' }));
+		var input = document.querySelector('.rp-docs-row .rp-input');
+		fireEvent.change(input, { target: { value: '晨读·春晓' } });
+		fireEvent.click(screen.getByRole('button', { name: '保存' }));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('晨读·春晓');
+		});
+		/* 文件本体路径不变 */
+		expect(sharedClient().transport.files.has('workspace/春晓.txt')).toBe(true);
+	});
+
+	it('删除：二次确认后文件与索引一并移除', async function () {
+		await sharedClient().writeFile({ path: 'workspace/春晓.txt', content: '春眠不觉晓' });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('春晓');
+		});
+		fireEvent.click(screen.getByRole('button', { name: '删除' }));
+		await waitFor(function () {
+			expect(screen.getByRole('button', { name: '确认删除' })).toBeTruthy();
+		});
+		/* 确认前文件仍在 */
+		expect(sharedClient().transport.files.has('workspace/春晓.txt')).toBe(true);
+		fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+		await waitFor(function () {
+			expect(sharedClient().transport.files.has('workspace/春晓.txt')).toBe(false);
+		});
+		expect(sharedClient().transport.recent.indexOf('workspace/春晓.txt')).toBe(-1);
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('还没有字帖');
+		});
+	});
+
+	it('收藏：星标切换后该条置顶，再点取消回落', async function () {
+		await sharedClient().writeFile({ path: 'workspace/甲.txt', content: '甲内容' });
+		await new Promise(function (r) { setTimeout(r, 5); }); /* 保证乙的 updated_at 更新 */
+		await sharedClient().writeFile({ path: 'workspace/乙.txt', content: '乙内容' });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('乙');
+		});
+		/* 默认顺序乙在前，收藏第二条（甲） */
+		var starButtons = document.querySelectorAll('.rp-star');
+		expect(starButtons.length).toBe(2);
+		fireEvent.click(starButtons[1]);
+		await waitFor(function () {
+			var first = document.querySelector('.rp-docs-list .rp-docs-title');
+			expect(first.textContent).toBe('甲');
+		});
+		/* 取消收藏：乙重新置顶 */
+		starButtons = document.querySelectorAll('.rp-star');
+		fireEvent.click(starButtons[0]); /* 此时第一个仍是甲 */
+		await waitFor(function () {
+			var first = document.querySelector('.rp-docs-list .rp-docs-title');
+			expect(first.textContent).toBe('乙');
+		});
+	});
+
+	it('内容源入库后列表展示条目，点击打开写入 Content', async function () {
+		await sharedClient().writeFile({ path: 'workspace/春晓.txt', content: '春眠不觉晓，处处闻啼鸟。' });
+		act(function () { store.dispatch(setContent('')); });
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('[data-page="docs"]'));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('春晓');
+		});
+		fireEvent.click(screen.getByText('春晓'));
+		await waitFor(function () {
+			expect(store.getState().config.Content).toBe('春眠不觉晓，处处闻啼鸟。');
+		});
+	});
+});
+
+describe('预设导入导出（P-a）', function () {
+	function presetData(over) {
+		var d = {};
+		Z.PRESET_KEYS.forEach(function (k) { d[k] = Z.DEFAULTS[k]; });
+		return Object.assign(d, over || {});
+	}
+
+	function gotoLayout() {
+		renderWithStore(<div><Panel /><ToastHost /></div>);
+		fireEvent.click(screen.getByRole('button', { name: '版式' }));
+	}
+
+	function stubClipboard() {
+		var writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(window.navigator, 'clipboard', {
+			value: { writeText: writeText }, configurable: true
+		});
+		return writeText;
+	}
+
+	it('复制分享链接：编码全部具名预设为 #p= URL', async function () {
+		Z.savePreset('硬笔', presetData({ Cols: 6 }));
+		Z.savePreset('软笔', presetData({ Cols: 8 }));
+		var writeText = stubClipboard();
+		gotoLayout();
+		fireEvent.click(screen.getByRole('button', { name: '复制分享链接' }));
+		await waitFor(function () { expect(writeText).toHaveBeenCalled(); });
+		var url = String(writeText.mock.calls[0][0]);
+		expect(url).toContain('#p=');
+		var decoded = Z.decodePresetShare(url);
+		expect(decoded.count).toBe(2);
+		expect(decoded.presets['硬笔'].Cols).toBe(6);
+		expect(decoded.presets['软笔'].Cols).toBe(8);
+		expect(document.body.textContent).toContain('预设链接已复制（含 2 个预设）');
+	});
+
+	it('导出 JSON：下载内容含版本标记与全部预设', async function () {
+		Z.savePreset('硬笔', presetData({ Cols: 6 }));
+		var created = [];
+		var realCreate = URL.createObjectURL;
+		URL.createObjectURL = function (blob) { created.push(blob); return 'blob:mock'; };
+		URL.revokeObjectURL = function () {};
+		gotoLayout();
+		fireEvent.click(screen.getByRole('button', { name: '导出 JSON' }));
+		await waitFor(function () { expect(created.length).toBe(1); });
+		var text = await created[0].text();
+		var data = JSON.parse(text);
+		expect(data.kind).toBe('zitie.presets');
+		expect(data.presets['硬笔'].Cols).toBe(6);
+		expect(document.body.textContent).toContain('已导出预设 JSON（1 个）');
+		URL.createObjectURL = realCreate;
+	});
+
+	it('导入链接：识别数量后合并，写入本机预设库', async function () {
+		var payload = Z.encodePresetShare({ 颜体: presetData({ Cols: 5 }), 柳体: presetData({ Cols: 7 }) });
+		gotoLayout();
+		fireEvent.click(screen.getByRole('button', { name: '导入…' }));
+		fireEvent.change(document.getElementById('presetImportText'), { target: { value: payload.url } });
+		await waitFor(function () { expect(document.body.textContent).toContain('识别到 2 个预设'); });
+		fireEvent.click(screen.getByRole('button', { name: '导入' }));
+		await waitFor(function () {
+			expect(Object.keys(Z.loadPresets()).sort()).toEqual(['柳体', '颜体']);
+		});
+		expect(Z.loadPresets()['颜体'].Cols).toBe(5);
+		expect(document.body.textContent).toContain('已导入 2 个预设');
+	});
+
+	it('同名跳过：不覆盖本机已有预设并如实汇报', async function () {
+		Z.savePreset('颜体', presetData({ Cols: 1 }));
+		var payload = Z.encodePresetShare({ 颜体: presetData({ Cols: 9 }), 欧体: presetData({ Cols: 4 }) });
+		gotoLayout();
+		fireEvent.click(screen.getByRole('button', { name: '导入…' }));
+		fireEvent.change(document.getElementById('presetImportText'), { target: { value: payload.url } });
+		await waitFor(function () { expect(document.body.textContent).toContain('其中 1 个与现有同名'); });
+		fireEvent.click(screen.getByRole('button', { name: '导入' }));
+		await waitFor(function () { expect(document.body.textContent).toContain('已导入 1 个预设（跳过同名 1 个）'); });
+		expect(Z.loadPresets()['颜体'].Cols).toBe(1);
+		expect(Z.loadPresets()['欧体'].Cols).toBe(4);
+	});
+
+	it('选择 JSON 文件导入：FileReader 路径同样可用', async function () {
+		var text = Z.presetsToJson({ 赵体: presetData({ Cols: 3 }) });
+		gotoLayout();
+		fireEvent.click(screen.getByRole('button', { name: '导入…' }));
+		var file = new File([text], 'presets.json', { type: 'application/json' });
+		var input = document.querySelector('.rp-presetio-modal input[type="file"]');
+		fireEvent.change(input, { target: { files: [file] } });
+		await waitFor(function () { expect(document.body.textContent).toContain('识别到 1 个预设'); });
+		fireEvent.click(screen.getByRole('button', { name: '导入' }));
+		await waitFor(function () { expect(Z.loadPresets()['赵体'].Cols).toBe(3); });
+	});
+});
+
+describe('描红浓度与页首标题（Z1=C-a / Z2=C-b）', function () {
+	it('Z1 描红浓度：滑块实时改配置，预览描红透明度同步', function () {
+		act(function () { store.dispatch(setField({ key: 'Template', value: 'trace' })); });
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '文字' }));
+		var slider = document.getElementById('traceRatio');
+		expect(slider).toBeTruthy();
+		fireEvent.change(slider, { target: { value: '10' } });
+		expect(store.getState().config.TraceRatio).toBe(10);
+		/* 预览描红格透明度 = InkAlpha × TraceRatio% */
+		var rendered = renderWithStore(<Preview pinyinReady={false} />);
+		var line = rendered.container.querySelector('.hz-line.is-trace');
+		expect(line).toBeTruthy();
+		/* jsdom 会把 alpha 归一化到 3 位小数，容差放宽到 0.005（精确值由 shared 用例保证） */
+		var m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(line.style.color || '');
+		expect(m).toBeTruthy();
+		expect(Math.abs(parseFloat(m[1]) - store.getState().config.InkAlpha * 0.1)).toBeLessThan(0.005);
+	});
+
+	it('Z2 页首标题：开关切换每页显示，字号随缩放', function () {
+		act(function () {
+			store.dispatch(setField({ key: 'Title', value: '每日练习' }));
+		});
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '版式' }));
+		var toggle = document.getElementById('showPageTitle');
+		expect(toggle).toBeTruthy();
+		expect(toggle.textContent).toBe('仅首页');
+		fireEvent.click(toggle);
+		expect(store.getState().config.ShowPageTitle).toBe(true);
+		expect(document.getElementById('pageTitleScale')).toBeTruthy();
+
+		function titleFont() {
+			var el = document.querySelector('.sheet-title');
+			return el ? parseFloat(el.style.fontSize) : 0;
+		}
+		var small = renderWithStore(<Preview pinyinReady={false} />);
+		var before = titleFont();
+		expect(small.container.querySelector('.sheet-title').textContent).toBe('每日练习');
+		act(function () { store.dispatch(setField({ key: 'PageTitleScale', value: 100 })); });
+		var big = renderWithStore(<Preview pinyinReady={false} />);
+		var after = titleFont();
+		expect(after).toBeGreaterThan(before);
+		expect(Math.abs(after / before - 100 / 42)).toBeLessThan(0.02);
+	});
+});
+
+describe('笔画粗细（C-c）', function () {
+	it('C-c 滑杆改配置：默认「默认」，0–80 步进 5', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '文字' }));
+		var slider = document.getElementById('inkWidth');
+		expect(slider).toBeTruthy();
+		expect(slider.min).toBe('0');
+		expect(slider.max).toBe('80');
+		expect(slider.step).toBe('5');
+		expect(store.getState().config.InkWidth).toBe(0);
+		fireEvent.change(slider, { target: { value: '40' } });
+		expect(store.getState().config.InkWidth).toBe(40);
+	});
+
+	it('C-c 预览注入 --char-stroke：字形描边 = 字号 × InkWidth/1000', function () {
+		act(function () { store.dispatch(setField({ key: 'InkWidth', value: 40 })); });
+		renderWithStore(<Preview pinyinReady={false} />);
+		var host = document.getElementById('printContent');
+		expect(host).toBeTruthy();
+		expect(host.style.getPropertyValue('--char-stroke')).toBe('0.04em');
+		act(function () { store.dispatch(setField({ key: 'InkWidth', value: 0 })); });
+		renderWithStore(<Preview pinyinReady={false} />);
+		expect(document.getElementById('printContent').style.getPropertyValue('--char-stroke')).toBe('0em');
+	});
+});
+
+describe('纸张底色与纹理（C-d）', function () {
+	it('C-d 底色 / 纹理控件改配置，自定义色覆盖预设', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '版式' }));
+		var swatch = screen.getByRole('button', { name: '纸张底色预设 米黄' });
+		expect(swatch).toBeTruthy();
+		fireEvent.click(swatch);
+		expect(store.getState().config.PaperColor).toBe('cream');
+		expect(store.getState().config.PaperTint).toBe('');
+		/* 自定义色写入 PaperTint */
+		var picker = document.querySelector('.rp-color-input[aria-label="自定义纸张颜色"]');
+		expect(picker).toBeTruthy();
+		fireEvent.change(picker, { target: { value: '#E8DCC0' } });
+		expect(store.getState().config.PaperTint).toBe('#e8dcc0');
+		/* 纹理三选一 */
+		fireEvent.click(screen.getByRole('button', { name: '洒金' }));
+		expect(store.getState().config.PaperTexture).toBe('speckle');
+		fireEvent.click(screen.getByRole('button', { name: '无' }));
+		expect(store.getState().config.PaperTexture).toBe('none');
+	});
+
+	it('C-d 预览注入 --paper-bg / --paper-texture，导出同源', function () {
+		act(function () {
+			store.dispatch(setField({ key: 'PaperColor', value: 'rice' }));
+			store.dispatch(setField({ key: 'PaperTexture', value: 'fiber' }));
+		});
+		renderWithStore(<Preview pinyinReady={false} />);
+		var host = document.getElementById('printContent');
+		expect(host.style.getPropertyValue('--paper-bg')).toBe('#F4EBDA');
+		var tex = host.style.getPropertyValue('--paper-texture');
+		expect(tex.indexOf('data:image/svg+xml') !== -1).toBe(true);
+		act(function () { store.dispatch(setField({ key: 'PaperTexture', value: 'none' })); });
+		renderWithStore(<Preview pinyinReady={false} />);
+		expect(document.getElementById('printContent').style.getPropertyValue('--paper-texture')).toBe('none');
+	});
+});
+
+describe('PNG 导出分辨率（C-e）', function () {
+	it('C-e 输出页分辨率滑杆：默认 144dpi，96–384 步进 48', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '输出' }));
+		var slider = document.getElementById('pngDpi');
+		expect(slider).toBeTruthy();
+		expect(slider.min).toBe('96');
+		expect(slider.max).toBe('384');
+		expect(slider.step).toBe('48');
+		expect(store.getState().config.PngDpi).toBe(144);
+		fireEvent.change(slider, { target: { value: '288' } });
+		expect(store.getState().config.PngDpi).toBe(288);
+	});
+});
+
+describe('打印缩放（C-f）', function () {
+	it('C-f 输出页滑杆：自动档按安全宽度计算', function () {
+		renderWithStore(<Panel />);
+		fireEvent.click(screen.getByRole('button', { name: '输出' }));
+		var slider = document.getElementById('printScale');
+		expect(slider).toBeTruthy();
+		expect(slider.min).toBe('0');
+		expect(slider.max).toBe('100');
+		expect(slider.step).toBe('5');
+		expect(store.getState().config.PrintScale).toBe(0);
+		fireEvent.change(slider, { target: { value: '60' } });
+		expect(store.getState().config.PrintScale).toBe(60);
+	});
+
+	it('C-f 预览注入 --print-zoom：默认 A4 自动缩小，手动档按百分比', function () {
+		renderWithStore(<Preview pinyinReady={false} />);
+		var zoom = document.getElementById('printContent').style.getPropertyValue('--print-zoom');
+		expect(Math.abs(parseFloat(zoom) - 200 / 210)).toBeLessThan(1e-6);
+		act(function () { store.dispatch(setField({ key: 'PrintScale', value: 60 })); });
+		renderWithStore(<Preview pinyinReady={false} />);
+		expect(document.getElementById('printContent').style.getPropertyValue('--print-zoom')).toBe('0.6');
+	});
+});
+
+describe('页级微调（Z3）', function () {
+	function pageTools(pageIndex) {
+		var page = document.querySelector('.rp-page[data-page="' + pageIndex + '"]');
+		return page ? page.querySelectorAll('.rp-page-tools .rp-link') : [];
+	}
+
+	it('删去本页：移除该页内容并提示可撤销', function () {
+		act(function () { store.dispatch(setField({ key: 'Content', value: '天地玄黄\n\n宇宙洪荒' })); });
+		renderWithStore(<div><Preview pinyinReady={false} /><ToastHost /></div>);
+		var tools = pageTools(0);
+		expect(tools.length).toBe(2);
+		fireEvent.click(tools[0]);
+		expect(store.getState().config.Content).toBe('宇宙洪荒');
+		expect(document.body.textContent).toContain('已删除第 1 页内容');
+	});
+
+	it('与下页合并：显式空行边界成功合并', function () {
+		act(function () { store.dispatch(setField({ key: 'Cols', value: 8 })); });
+		act(function () { store.dispatch(setField({ key: 'Content', value: '天地玄黄\n\n宇宙洪荒' })); });
+		renderWithStore(<div><Preview pinyinReady={false} /><ToastHost /></div>);
+		fireEvent.click(pageTools(0)[1]);
+		expect(store.getState().config.Content).toBe('天地玄黄\n宇宙洪荒');
+		expect(document.body.textContent).toContain('已合并第 1 / 2 页');
+	});
+
+	it('自动分页边界：合并不适用时如实提示', function () {
+		act(function () { store.dispatch(setField({ key: 'Cols', value: 8 })); });
+		act(function () { store.dispatch(setField({ key: 'Content', value: '永'.repeat(96) })); });
+		renderWithStore(<div><Preview pinyinReady={false} /><ToastHost /></div>);
+		fireEvent.click(pageTools(0)[1]);
+		expect(document.body.textContent).toContain('自动分页');
+		expect(document.body.textContent).toContain('不能直接合并');
+		/* 最后一页的合并按钮禁用 */
+		var last = pageTools(1)[1];
+		expect(last.disabled).toBe(true);
+	});
+});
+
+describe('导入自动化清洗（Z4）', function () {
+	it('内容工具「清洗排版…」：折叠空行 + 统一标点并汇报', function () {
+		act(function () { store.dispatch(setContent('  天地玄黄  \n\n\n宇宙洪荒,你好! ')); });
+		renderWithStore(<div><Panel /><ToastHost /></div>);
+		fireEvent.click(screen.getByRole('button', { name: '内容' }));
+		fireEvent.click(screen.getByRole('button', { name: /清洗排版/ }));
+		expect(store.getState().config.Content).toBe('天地玄黄\n\n宇宙洪荒，你好！');
+		expect(document.body.textContent).toContain('已清洗排版');
+		expect(document.body.textContent).toContain('统一标点 2 处');
+	});
+
+	it('干净内容：提示无需清洗且不产生改动', function () {
+		act(function () { store.dispatch(setContent('天地\n\n玄黄')); });
+		renderWithStore(<div><Panel /><ToastHost /></div>);
+		fireEvent.click(screen.getByRole('button', { name: '内容' }));
+		fireEvent.click(screen.getByRole('button', { name: /清洗排版/ }));
+		expect(store.getState().config.Content).toBe('天地\n\n玄黄');
+		expect(document.body.textContent).toContain('已是干净状态');
+	});
+});
+
+describe('状态完备性（U3）', function () {
+	function toastEl(text) {
+		return Array.prototype.filter.call(
+			document.querySelectorAll('.rp-toast'),
+			function (el) { return el.textContent.indexOf(text) >= 0; }
+		)[0] || null;
+	}
+
+	it('空内容导出 PNG：前置提示，不进入生成、不给无意义的「重试」', async function () {
+		var mod = await import('../web/src/App.jsx');
+		act(function () { store.dispatch(setContent('')); });
+		var rendered = renderWithStore(React.createElement(mod.default));
+		fireEvent.click(document.querySelector('[data-page="output"]'));
+		fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
+		await waitFor(function () {
+			expect(toastEl('内容为空')).toBeTruthy();
+		});
+		expect(toastEl('内容为空').className).toContain('rp-toast-info');
+		expect(toastEl('内容为空').querySelector('.rp-toast-action')).toBeNull();
+		/* 未落到 renderPages 抛错，因此不应出现「导出失败」错误态 */
+		expect(store.getState().ui.toasts.some(function (t) { return t.type === 'error' && t.text.indexOf('导出失败') >= 0; })).toBe(false);
+		expect(rendered.container.querySelector('[data-page="output"]')).toBeTruthy();
+		rendered.unmount();
+	});
+
+	it('拼音库加载失败（离线降级）：明确提示且预览照常渲染', async function () {
+		mockState.pinyinFails = true;
+		var mod = await import('../web/src/App.jsx');
+		var rendered = renderWithStore(React.createElement(mod.default));
+		await waitFor(function () {
+			expect(toastEl('拼音库加载失败')).toBeTruthy();
+		});
+		expect(toastEl('拼音库加载失败').className).toContain('rp-toast-info');
+		expect(document.getElementById('rp-main')).toBeTruthy();
+		rendered.unmount();
+	});
+});
+
+describe('接入设置（更多页 · U6 端口固定）', function () {
+	var PORT_KEY = 'zitie.backend.port';
+
+	function openMore() {
+		var rendered = renderWithStore(<Panel />);
+		/* 「更多」是独立 rail 按钮（.rp-rail-more），非 RAIL_MAIN 项 */
+		fireEvent.click(rendered.container.querySelector('.rp-rail-more'));
+		return rendered;
+	}
+
+	it('保存合法端口写入 localStorage，非法端口被拒绝', function () {
+		window.localStorage.removeItem(PORT_KEY);
+		var rendered = openMore();
+		var input = rendered.container.querySelector('input[type="number"]');
+		expect(input).toBeTruthy();
+		/* 「更多」页现有两处本地模式文案（接入设置 / 数据备份），断言至少一处即可 */
+		expect(screen.getAllByText(/本地模式/).length).toBeGreaterThan(0);
+
+		fireEvent.change(input, { target: { value: '46079' } });
+		fireEvent.click(screen.getByRole('button', { name: '保存' }));
+		expect(window.localStorage.getItem(PORT_KEY)).toBe('46079');
+		expect(document.body.textContent).toContain('已固定端口 46079');
+
+		fireEvent.change(input, { target: { value: '0' } });
+		fireEvent.click(screen.getByRole('button', { name: '保存' }));
+		expect(window.localStorage.getItem(PORT_KEY)).toBe('46079'); /* 非法值不得覆盖已存 */
+		expect(document.body.textContent).toContain('请输入 1–65535');
+		rendered.unmount();
+	});
+
+	it('清除按钮移除固定端口并提示恢复默认探测', function () {
+		window.localStorage.setItem(PORT_KEY, '46080');
+		var rendered = openMore();
+		expect(rendered.container.querySelector('input[type="number"]').value).toBe('46080');
+		fireEvent.click(screen.getByRole('button', { name: '清除' }));
+		expect(window.localStorage.getItem(PORT_KEY)).toBeNull();
+		expect(document.body.textContent).toContain('已清除固定端口');
+		rendered.unmount();
+	});
+
+	it('测试连接：按输入端口探测 /api/config 并给出可达性结论', async function () {
+		window.localStorage.removeItem(PORT_KEY);
+		vi.stubGlobal('fetch', vi.fn(async function (url) {
+			expect(String(url)).toBe('http://127.0.0.1:46081/api/config');
+			return { ok: true, json: async function () { return { app: 'motie' }; } };
+		}));
+		var rendered = openMore();
+		fireEvent.change(rendered.container.querySelector('input[type="number"]'), { target: { value: '46081' } });
+		fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+		await waitFor(function () {
+			expect(document.body.textContent).toContain('端口 46081 可达墨帖内核');
+		});
+		rendered.unmount();
+		vi.unstubAllGlobals();
+	});
+
+	it('数据备份（E3）：仅本地模式显示；http 模式隐藏', function () {
+		var rendered = renderWithStore(<Panel />);
+		fireEvent.click(rendered.container.querySelector('.rp-rail-more'));
+		function findExportBtn() {
+			return Array.prototype.find.call(
+				rendered.container.querySelectorAll('button'),
+				function (b) { return b.textContent.indexOf('导出完整备份') !== -1; }
+			) || null;
+		}
+		expect(findExportBtn()).toBeTruthy(); /* 默认 mock（本地模式）可见 */
+		act(function () { store.dispatch(setBackendMode('http')); });
+		expect(findExportBtn()).toBeNull();
+		act(function () { store.dispatch(setBackendMode('mock')); }); /* 还原，避免影响后续用例 */
+		rendered.unmount();
 	});
 });

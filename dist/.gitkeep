@@ -1,2 +1,0 @@
-# 本目录为前端构建产物（npm run build）所在处；构建前至少保留此占位文件，
-# 以满足 main.go 的 //go:embed all:dist 约束（CI 静态检查才能通过）。

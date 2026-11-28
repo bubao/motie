@@ -26,6 +26,7 @@ import (
 	"motie/internal/domain"
 	"motie/internal/files"
 	"motie/internal/fonts"
+	"motie/internal/library"
 	"motie/internal/workspace"
 )
 
@@ -81,6 +82,216 @@ func doWithHeader(t *testing.T, h http.Handler, method, path, origin string, bod
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+/* 字体标签路由（F-a）。 */
+func TestFontTagsRoute(t *testing.T) {
+	dir := t.TempDir()
+	svc := fonts.New(filepath.Join(dir, "fonts"), filepath.Join(dir, "index.json"), nil)
+	e, err := svc.Add("标签字体", ".otf", []byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bus := NewBus()
+	s := New(Deps{
+		Fonts:   svc,
+		WebFS:   fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html><head></head><body>motie</body></html>")}},
+		Bus:     bus,
+		Version: "test",
+	})
+	s.SetPort(39133)
+	rec := do(t, s.Handler(), http.MethodPost, "/api/fonts/tags", "", strings.NewReader(fmt.Sprintf(`{"id":%q,"tags":["楷书","行草"]}`, e.ID)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tags → %d %s", rec.Code, rec.Body.String())
+	}
+	list, _ := svc.ListUser()
+	if len(list[0].Tags) != 2 || list[0].Tags[0] != "楷书" {
+		t.Fatalf("tags = %v", list[0].Tags)
+	}
+	rec = do(t, s.Handler(), http.MethodPost, "/api/fonts/tags", "", strings.NewReader(`{"id":"fzzzzzzzz","tags":["x"]}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("tags missing → %d", rec.Code)
+	}
+}
+
+/* 字帖索引库（M1）：reindex 并入最近文件 → 列表按更新时间倒序。 */
+func TestLibraryRoutes(t *testing.T) {
+	lib, err := library.OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory: %v", err)
+	}
+	defer lib.Close()
+	if err := lib.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	s := New(Deps{
+		Library: lib,
+		WebFS:   fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html><head></head><body>motie</body></html>")}},
+		Bus:     NewBus(),
+		Version: "test",
+	})
+	s.SetPort(39130)
+
+	rec := do(t, s.Handler(), http.MethodPost, "/api/library/reindex", "", strings.NewReader(`{"paths":["workspace/春晓.md","workspace/春晓.md","","export/word.txt"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reindex → %d %s", rec.Code, rec.Body.String())
+	}
+	var rr struct {
+		Added int `json:"added"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rr); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Added != 2 {
+		t.Fatalf("added = %d, want 2（重复与空串跳过）", rr.Added)
+	}
+
+	rec = do(t, s.Handler(), http.MethodGet, "/api/library", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list → %d %s", rec.Code, rec.Body.String())
+	}
+	var list []domain.DocumentEntry
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Path != "export/word.txt" || list[0].Title != "word" {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+/* 重命名 / 搜索 / 删除（M3）。 */
+func TestLibraryManageRoutes(t *testing.T) {
+	lib, err := library.OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory: %v", err)
+	}
+	defer lib.Close()
+	if err := lib.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	mem := &memFiles{files: map[string]domain.WorkspaceFile{}, recent: []string{"workspace/春晓.md"}}
+	mem.files["workspace/春晓.md"] = domain.WorkspaceFile{Path: "workspace/春晓.md", Content: "春眠不觉晓"}
+	s := New(Deps{
+		Library: lib,
+		Files:   mem,
+		WebFS:   fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html><head></head><body>motie</body></html>")}},
+		Bus:     NewBus(),
+		Version: "test",
+	})
+	s.SetPort(39131)
+
+	rec := do(t, s.Handler(), http.MethodPost, "/api/library/reindex", "", strings.NewReader(`{"paths":["workspace/春晓.md"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reindex → %d %s", rec.Code, rec.Body.String())
+	}
+	var list []domain.DocumentEntry
+	json.Unmarshal(do(t, s.Handler(), http.MethodGet, "/api/library", "", nil).Body.Bytes(), &list)
+	if len(list) != 1 {
+		t.Fatalf("list = %+v", list)
+	}
+	id := list[0].ID
+
+	/* 搜索：?q=春晓 命中；?q=登鹳雀楼 为空 */
+	rec = do(t, s.Handler(), http.MethodGet, "/api/library?q="+url.QueryEscape("春晓"), "", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "春晓") {
+		t.Fatalf("search hit → %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s.Handler(), http.MethodGet, "/api/library?q=xyz", "", nil)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("search miss → %d %s", rec.Code, rec.Body.String())
+	}
+
+	/* 重命名：仅标题变化 */
+	rec = do(t, s.Handler(), http.MethodPost, "/api/library/rename", "", strings.NewReader(fmt.Sprintf(`{"id":%d,"title":"春晓（晨读）"}`, id)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename → %d %s", rec.Code, rec.Body.String())
+	}
+	got, _ := lib.Get(id)
+	if got.Title != "春晓（晨读）" || got.Path != "workspace/春晓.md" {
+		t.Fatalf("after rename = %+v", got)
+	}
+	/* 空标题拒绝 */
+	rec = do(t, s.Handler(), http.MethodPost, "/api/library/rename", "", strings.NewReader(fmt.Sprintf(`{"id":%d,"title":"  "}`, id)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("rename empty → %d", rec.Code)
+	}
+
+	/* 删除：文件与索引一并消失 */
+	rec = do(t, s.Handler(), http.MethodPost, "/api/library/delete", "", strings.NewReader(fmt.Sprintf(`{"id":%d}`, id)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete → %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := mem.files["workspace/春晓.md"]; ok {
+		t.Fatal("文件未删除")
+	}
+	for _, p := range mem.recent {
+		if p == "workspace/春晓.md" {
+			t.Fatal("recents 残留已删路径")
+		}
+	}
+	if n, _ := lib.Count(); n != 0 {
+		t.Fatalf("索引残留 count = %d", n)
+	}
+	/* 重复删除 404 */
+	rec = do(t, s.Handler(), http.MethodPost, "/api/library/delete", "", strings.NewReader(fmt.Sprintf(`{"id":%d}`, id)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete twice → %d", rec.Code)
+	}
+}
+
+/* 收藏路由（M4）：切换后列表首条为收藏项；未知 id → 404。 */
+func TestLibraryFavoriteRoute(t *testing.T) {
+	lib, err := library.OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Deps{
+		Library: lib,
+		WebFS:   fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html><head></head><body>motie</body></html>")}},
+		Bus:     NewBus(),
+		Version: "test",
+	})
+	s.SetPort(39132)
+	do(t, s.Handler(), http.MethodPost, "/api/library/reindex", "", strings.NewReader(`{"paths":["workspace/a.md","workspace/b.md"]}`))
+	var list []domain.DocumentEntry
+	json.Unmarshal(do(t, s.Handler(), http.MethodGet, "/api/library", "", nil).Body.Bytes(), &list)
+	if len(list) != 2 {
+		t.Fatalf("list = %+v", list)
+	}
+	b := list[1]
+	rec := do(t, s.Handler(), http.MethodPost, "/api/library/favorite", "", strings.NewReader(fmt.Sprintf(`{"id":%d,"favorite":true}`, b.ID)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("favorite → %d %s", rec.Code, rec.Body.String())
+	}
+	json.Unmarshal(do(t, s.Handler(), http.MethodGet, "/api/library", "", nil).Body.Bytes(), &list)
+	if list[0].ID != b.ID || !list[0].Favorite {
+		t.Fatalf("after favorite first = %+v", list[0])
+	}
+	/* 未知 id */
+	rec = do(t, s.Handler(), http.MethodPost, "/api/library/favorite", "", strings.NewReader(`{"id":999,"favorite":true}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("favorite missing → %d", rec.Code)
+	}
+}
+
+/* Library 未装配（nil）：GET 返回空数组，POST 404——不得 panic。 */
+func TestLibraryNilSafe(t *testing.T) {
+	s, _ := testServer(t)
+	rec := do(t, s.Handler(), http.MethodGet, "/api/library", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/library → %d", rec.Code)
+	}
+	if strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("nil library body = %s", rec.Body.String())
+	}
+	rec = do(t, s.Handler(), http.MethodPost, "/api/library/reindex", "", strings.NewReader(`{"paths":[]}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/library/reindex → %d", rec.Code)
+	}
 }
 
 /* 未知 /api/* 必须 404 JSON，且不得返回 index.html。 */
@@ -194,9 +405,9 @@ func TestPutConfigPartialUpdateKeepsServerFields(t *testing.T) {
 
 	/* 显式提供的零值应覆盖旧值（按键合并，而非「零值视为未提供」） */
 	rec = do(t, s.Handler(), http.MethodPut, "/api/config", "",
-		io.NopCloser(strings.NewReader(`{"FontURL":""}`)))
+		io.NopCloser(strings.NewReader(`{"fontURL":""}`)))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT FontURL → %d", rec.Code)
+		t.Fatalf("PUT fontURL → %d", rec.Code)
 	}
 	if m.cfg.FontURL != "" {
 		t.Errorf("显式清空未生效：%q", m.cfg.FontURL)
@@ -337,6 +548,21 @@ func (m *memFiles) Read(path string) (domain.WorkspaceFile, error) {
 		return f, nil
 	}
 	return domain.WorkspaceFile{}, errors.New("not found: " + path)
+}
+
+func (m *memFiles) Delete(path string) error {
+	if _, ok := m.files[path]; !ok {
+		return errors.New("not found: " + path)
+	}
+	delete(m.files, path)
+	out := make([]string, 0, len(m.recent))
+	for _, p := range m.recent {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	m.recent = out
+	return nil
 }
 
 func (m *memFiles) Write(f domain.WorkspaceFile) error {
@@ -586,6 +812,15 @@ func (m *memFontLib) Rename(id, name string) error {
 	}
 	return fonts.ErrNotFound
 }
+func (m *memFontLib) UpdateTags(id string, tags []string) error {
+	for i := range m.user {
+		if m.user[i].ID == id {
+			m.user[i].Tags = append([]string(nil), tags...)
+			return nil
+		}
+	}
+	return fonts.ErrNotFound
+}
 func (m *memFontLib) File(id string) ([]byte, string, error) {
 	if id != "f-test" {
 		return nil, "", fonts.ErrNotFound
@@ -777,5 +1012,52 @@ func TestStage2ServicesNilFallback(t *testing.T) {
 	rec = do(t, s.Handler(), http.MethodPut, "/api/kindle", "", nil)
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "error") {
 		t.Errorf("nil kindle → %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+/* PUT /api/files 落盘后字数快照同步进字帖索引（修复 documents.chars 无写入者的断裂点）。 */
+func TestFilesPutSyncsLibraryChars(t *testing.T) {
+	s, _, _ := testServerWithFiles(t)
+	lib, err := library.OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory: %v", err)
+	}
+	defer lib.Close()
+	if err := lib.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	s.deps.Library = lib
+
+	rec := do(t, s.Handler(), http.MethodPut, "/api/files", "",
+		io.NopCloser(strings.NewReader(`{"path":"workspace/春晓.txt","content":"春眠不觉晓"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/files → %d %s", rec.Code, rec.Body.String())
+	}
+	list, err := lib.List()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v, err=%v", list, err)
+	}
+	if list[0].Chars != 5 || list[0].Title != "春晓" {
+		t.Fatalf("首次落盘条目 = %+v（期望 chars=5、title=春晓）", list[0])
+	}
+
+	/* 用户重命名并收藏后再写入：只刷 chars/updated_at，保留 title 与 favorite */
+	if err := lib.UpdateTitle(list[0].ID, "我的春晓"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.SetFavorite(list[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	rec = do(t, s.Handler(), http.MethodPut, "/api/files", "",
+		io.NopCloser(strings.NewReader(`{"path":"workspace/春晓.txt","content":"春"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("二次 PUT → %d %s", rec.Code, rec.Body.String())
+	}
+	got, err := lib.Get(list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Chars != 1 || got.Title != "我的春晓" || !got.Favorite {
+		t.Fatalf("再次落盘后 = %+v（期望 chars=1、title=我的春晓、favorite=true）", got)
 	}
 }

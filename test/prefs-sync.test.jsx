@@ -1,25 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { setField, applyRemotePrefs, store } from '../web/src/store.js';
+import { setField, applyRemotePrefs, store, setBackendMode } from '../web/src/store.js';
+import { initSharedClient } from '../web/src/ipc/client.ts';
 
-/* 桌面端偏好同步（阶段 1）：
+/* 偏好同步（U6：接入模式读 ui.backend，transport 由探测结果决定）：
  * 本地变更防抖 PUT 且只带偏好键；SSE 远端导入不回推（防环）。 */
 
 beforeEach(() => {
 	window.localStorage.clear();
-	delete window.__MOTIE_DESKTOP__;
 	vi.restoreAllMocks();
 });
 
-describe('桌面端偏好同步', function () {
+/** 模拟 boot：探测到本机内核（GET /api/config 返回 app=motie），并置 ui.backend=http */
+async function bootBackend(puts) {
+	globalThis.fetch = vi.fn(async function (url, init) {
+		if (String(url).indexOf('/api/config') !== -1) {
+			if (init && init.method === 'PUT') puts.push(JSON.parse(init.body));
+			return { ok: true, json: async function () { return { app: 'motie', version: '0', port: 0, config: {} }; } };
+		}
+		return { ok: true, json: async function () { return {}; } };
+	});
+	await initSharedClient(200);
+	store.dispatch(setBackendMode('http'));
+}
+
+describe('在线模式偏好同步', function () {
 	it('本地变更防抖 PUT 偏好子集（不含内容字段）', async function () {
-		window.__MOTIE_DESKTOP__ = true;
 		const puts = [];
-		globalThis.fetch = vi.fn(async function (url, init) {
-			if (String(url).endsWith('/api/config') && init && init.method === 'PUT') {
-				puts.push(JSON.parse(init.body));
-			}
-			return { ok: true, json: async () => ({ ok: 'true' }) };
-		});
+		await bootBackend(puts);
 
 		store.dispatch(setField({ key: 'Theme', value: 'dark' }));
 		expect(puts.length).toBe(0); /* 防抖窗口内不发 */
@@ -34,19 +41,28 @@ describe('桌面端偏好同步', function () {
 	});
 
 	it('SSE 远端偏好导入：更新状态且不回推 PUT', async function () {
-		window.__MOTIE_DESKTOP__ = true;
 		const puts = [];
-		globalThis.fetch = vi.fn(async function (url, init) {
-			if (String(url).endsWith('/api/config') && init && init.method === 'PUT') {
-				puts.push(JSON.parse(init.body));
-			}
-			return { ok: true, json: async () => ({ ok: 'true' }) };
-		});
+		await bootBackend(puts);
 
 		applyRemotePrefs({ Theme: 'light', ZgType: '2' });
 		expect(store.getState().config.Theme).toBe('light');
 		expect(store.getState().config.ZgType).toBe('2');
 		await new Promise(function (r) { setTimeout(r, 300); });
 		expect(puts.length).toBe(0); /* 防环：远端事件不得触发本地 PUT */
+	});
+
+	it('本地模式：配置只落 localStorage，不回推内核', async function () {
+		const puts = [];
+		globalThis.fetch = vi.fn(async function (url, init) {
+			if (String(url).indexOf('/api/config') !== -1 && init && init.method === 'PUT') puts.push(JSON.parse(init.body));
+			return { ok: false, status: 503, json: async function () { return {}; } }; /* 探测不可达 */
+		});
+		await initSharedClient(100);
+		store.dispatch(setBackendMode('mock'));
+
+		store.dispatch(setField({ key: 'Theme', value: 'dark' }));
+		await new Promise(function (r) { setTimeout(r, 300); });
+		expect(puts.length).toBe(0);
+		expect(window.localStorage.getItem('zitie.config')).toContain('dark'); /* 本地仍持久化 */
 	});
 });

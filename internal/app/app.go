@@ -15,6 +15,7 @@ import (
 	"motie/internal/files"
 	"motie/internal/fonts"
 	"motie/internal/kindle"
+	"motie/internal/library"
 	"motie/internal/pdf"
 	"motie/internal/version"
 	"motie/internal/workspace"
@@ -26,6 +27,7 @@ type Options struct {
 	Version      string
 	ExportDir    string   // PDF / Kindle 落盘目录（空 → 配置目录/pdf、配置目录/export）
 	RecentsAt    string   // 最近文件列表路径（空 → 配置目录/recents.json）
+	LibraryAt    string   // 字帖索引库路径（空 → 配置目录/library/motie.db）
 	FontsSysDirs []string // 系统字体扫描目录（空 → fonts.SystemFontDirs()，非 darwin 为空）
 	PresetsAt    string   // 预设 JSON 路径（空 → 配置目录/workspace/presets.json）
 	ConfigHome   string   // 配置根目录（测试注入；空 → os.UserConfigDir()/motie）
@@ -60,6 +62,7 @@ type App struct {
 	Fonts   *fonts.Service
 	Presets *workspace.PresetService
 	Kindle  *kindle.Service
+	Library *library.Store
 	Server  *api.Server
 
 	closeOnce sync.Once
@@ -69,7 +72,7 @@ type App struct {
 /* New 装配全部依赖；失败时不留半初始化状态。 */
 func New(opts Options) (*App, error) {
 	if opts.Version == "" {
-		opts.Version = version.Version
+		opts.Version = version.ResolveVersion()
 	}
 	base := opts.ConfigHome
 	if base == "" {
@@ -110,6 +113,27 @@ func New(opts Options) (*App, error) {
 		return nil, err
 	}
 
+	libraryAt := opts.LibraryAt
+	if libraryAt == "" {
+		libraryAt = filepath.Join(base, "library", "motie.db")
+	}
+	lib, err := library.Open(libraryAt)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if err := lib.Migrate(); err != nil {
+		lib.Close()
+		cancel()
+		return nil, err
+	}
+	/* 启动时把现有 recents.json 并入索引（幂等，已有条目不动）。 */
+	if _, err := lib.ReindexFromRecents(fileSvc.ListRecent()); err != nil {
+		lib.Close()
+		cancel()
+		return nil, err
+	}
+
 	a := &App{
 		opts:    opts,
 		ctx:     ctx,
@@ -121,6 +145,7 @@ func New(opts Options) (*App, error) {
 		Fonts:   fonts.New(filepath.Join(base, "fonts"), filepath.Join(base, "fonts", "index.json"), sysDirs),
 		Presets: workspace.NewPresetService(presetsAt),
 		Kindle:  kindle.New(opts.LiteFS, filepath.Join(base, "export")),
+		Library: lib,
 	}
 	a.Server = api.New(api.Deps{
 		Config:  a.Config,
@@ -129,6 +154,7 @@ func New(opts Options) (*App, error) {
 		Fonts:   a.Fonts,
 		Presets: a.Presets,
 		Kindle:  a.Kindle,
+		Library: a.Library,
 		Update:  api.NewUpdater(api.UpdateRepo, opts.Version),
 		WebFS:   opts.WebFS,
 		Bus:     bus,
@@ -143,10 +169,15 @@ func (a *App) Ctx() context.Context { return a.ctx }
 /* Version 与启动日志、REST 元信息口径一致。 */
 func (a *App) Version() string { return a.opts.Version }
 
-/* Close 幂等：取消根 Context、关闭事件总线订阅。 */
+/* Close 幂等：取消根 Context、关闭索引库与事件总线订阅。 */
 func (a *App) Close() error {
 	a.closeOnce.Do(func() {
 		a.cancel()
+		if a.Library != nil {
+			if err := a.Library.Close(); err != nil {
+				a.closeErr = errors.Join(a.closeErr, err)
+			}
+		}
 	})
 	return a.closeErr
 }

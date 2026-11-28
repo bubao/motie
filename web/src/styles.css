@@ -1,5 +1,27 @@
 /* React 完整版面板样式（预览区复用 css/main.css 的字格 / 分页 / 打印样式） */
 
+.rp-skip-link {
+	/* 跳转链接（U1）：默认移出视口，仅 :focus-visible 时显现 */
+	position: fixed;
+	left: 12px;
+	top: -48px;
+	z-index: 300;
+	padding: 8px 12px;
+	background: var(--sheet);
+	color: var(--ink);
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	font-size: var(--fs-md);
+	text-decoration: none;
+	transition: top .12s ease-out;
+}
+
+.rp-skip-link:focus-visible {
+	top: 10px;
+	outline: 2px solid rgba(var(--ink-rgb), .9);
+	outline-offset: 2px;
+}
+
 .rp {
 	display: flex;
 	flex-direction: column;
@@ -37,20 +59,20 @@
 	background: var(--cinnabar);
 	color: #fff;
 	font-family: var(--font-kai);
-	font-size: 16px;
+	font-size: var(--fs-xl);
 	font-weight: 700;
 	box-shadow: var(--shadow);
 }
 
 .rp-brand-name {
 	font-family: var(--font-kai);
-	font-size: 17px;
+	font-size: var(--fs-xl);
 	font-weight: 700;
 	letter-spacing: .04em;
 }
 
 .rp-brand-version {
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-faint);
 }
 
@@ -75,7 +97,7 @@
 	color: var(--ink-soft);
 	cursor: pointer;
 	font: inherit;
-	font-size: 12.5px;
+	font-size: var(--fs-sm);
 }
 
 .rp-theme button:last-child {
@@ -87,9 +109,26 @@
 	color: #fff;
 }
 
+/* 深色主题：提亮后的朱砂（--cinnabar）压白字不足 4.5，激活钮改用深朱砂底（WCAG AA） */
+html[data-theme="dark"] .rp-theme button.is-active {
+	background: var(--cinnabar-deep);
+}
+
 .rp-top-actions .rp-btn {
 	flex: 0 0 auto;
 	min-width: 0;
+}
+
+/* 本地模式标记（U6）：未连 Go 内核时顶栏明示，避免误以为数据会跨设备 / 持久 */
+.rp-backend-chip {
+	flex: 0 0 auto;
+	padding: 4px 8px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--ink-soft);
+	font-size: var(--fs-sm);
+	cursor: help;
 }
 
 /* ---------- 主体：rail + 面板 + 预览 ---------- */
@@ -131,7 +170,7 @@
 	cursor: pointer;
 	color: var(--ink-soft);
 	font: inherit;
-	font-size: 10.5px;
+	font-size: var(--fs-xs);
 	line-height: 1.2;
 }
 
@@ -178,25 +217,25 @@
 
 .rp-page-head h2 {
 	margin: 0;
-	font-size: 16px;
+	font-size: var(--fs-xl);
 	font-weight: 600;
 }
 
 .rp-page-head p {
 	margin: 3px 0 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-faint);
 }
 
 .rp-page-note {
 	margin: 2px 0 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-faint);
 }
 
 .rp-about-text {
 	margin: 0 0 12px;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	line-height: 1.7;
 	color: var(--ink-soft);
 }
@@ -204,7 +243,7 @@
 /* 产物版本号（构建时由 package.json 注入） */
 .rp-version {
 	margin: 18px 0 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-faint);
 }
 
@@ -214,7 +253,7 @@
 
 .rp-group-title {
 	margin: 0 0 8px;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	font-weight: 600;
 	color: var(--ink-soft);
 	letter-spacing: .04em;
@@ -227,7 +266,7 @@
 .rp-field > label {
 	display: block;
 	margin-bottom: 4px;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 }
 
@@ -238,7 +277,7 @@
 	border: 1px solid var(--line);
 	border-radius: 6px;
 	font: inherit;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	background: var(--sheet);
 	color: var(--ink);
 }
@@ -259,7 +298,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--ink-soft);
 }
 
@@ -274,10 +313,16 @@
 	accent-color: var(--cinnabar);
 }
 
+/* 禁用滑杆（如「每行格数」在重复字模式下）：降权颜色 + 禁用光标，避免看起来仍可拖 */
+.rp-range:disabled {
+	accent-color: var(--ink-faint);
+	cursor: not-allowed;
+}
+
 .rp-row output {
 	min-width: 44px;
 	text-align: right;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-soft);
 }
 
@@ -297,7 +342,7 @@
 	border-bottom: 2px solid transparent;
 	background: none;
 	font-family: inherit;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	text-align: center;
 	color: var(--ink-soft);
 	cursor: pointer;
@@ -334,7 +379,7 @@
 	border-radius: 6px;
 	background: var(--sheet);
 	cursor: pointer;
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--ink);
 }
 
@@ -358,7 +403,7 @@
 	position: absolute;
 	top: 1px;
 	right: 3px;
-	font-size: 9px;
+	font-size: var(--fs-xs);
 	line-height: 1;
 	opacity: .55;
 	pointer-events: none;
@@ -386,7 +431,7 @@
 	flex: none;
 }
 .rp-pattern-name {
-	font-size: 10px;
+	font-size: var(--fs-xs);
 	line-height: 1.1;
 	white-space: nowrap;
 	opacity: .9;
@@ -408,12 +453,12 @@
 }
 
 .rp-field-head label {
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 }
 
 .rp-tpl-note {
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--ink-soft);
 }
 
@@ -479,7 +524,7 @@
 	border-radius: 6px;
 	background: var(--sheet);
 	cursor: pointer;
-	font-size: 10px;
+	font-size: var(--fs-xs);
 	line-height: 1.2;
 	color: var(--ink);
 }
@@ -509,26 +554,98 @@
 	gap: 6px;
 }
 
-.rp-scheme-btn {
+.rp-scheme-btn,
+.rp-sample-cat {
 	padding: 5px 10px;
 	border: 1px solid var(--line);
 	border-radius: 999px;
 	background: var(--sheet);
 	cursor: pointer;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink);
 }
 
-.rp-scheme-btn:hover {
+.rp-scheme-btn:hover,
+.rp-sample-cat:hover {
 	border-color: var(--cinnabar);
 	color: var(--cinnabar);
 }
 
 /* 快捷形态当前态 */
-.rp-scheme-btn.is-active {
+.rp-scheme-btn.is-active,
+.rp-sample-cat.is-active {
 	border-color: var(--cinnabar);
 	color: var(--cinnabar);
 	background: var(--ui-active-warm);
+}
+
+/* 示例库（A1）：搜索 + 分类 chips + 收藏列表 */
+.rp-sample-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 260px;
+	overflow-y: auto;
+}
+
+.rp-sample-item {
+	display: flex;
+	align-items: stretch;
+	gap: 4px;
+}
+
+.rp-sample-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 5px 8px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--sheet);
+	cursor: pointer;
+	text-align: left;
+}
+
+.rp-sample-main:hover {
+	border-color: var(--cinnabar);
+}
+
+.rp-sample-name {
+	font-size: var(--fs-sm);
+	color: var(--ink);
+	line-height: 1.3;
+}
+
+.rp-sample-text {
+	font-size: var(--fs-xs);
+	color: var(--ink-soft);
+	line-height: 1.3;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.rp-sample-star {
+	flex: none;
+	width: 30px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	cursor: pointer;
+	color: var(--ink-faint);
+}
+
+.rp-sample-star:hover {
+	color: var(--cinnabar);
+}
+
+.rp-sample-star.is-on {
+	color: var(--cinnabar);
 }
 
 /* 恢复默认外观 */
@@ -538,7 +655,7 @@
 	border-radius: 6px;
 	background: transparent;
 	cursor: pointer;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink);
 }
 
@@ -568,7 +685,7 @@
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 }
 
@@ -584,7 +701,7 @@
 .rp-fold > summary {
 	padding: 8px 10px;
 	cursor: pointer;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 	list-style: none;
 	user-select: none;
@@ -598,7 +715,7 @@
 	content: '▸';
 	display: inline-block;
 	margin-right: 6px;
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--ink-faint);
 	transition: transform .12s ease-out;
 }
@@ -627,7 +744,7 @@
 	color: var(--ink-soft);
 	cursor: pointer;
 	font: inherit;
-	font-size: 13px;
+	font-size: var(--fs-md);
 }
 
 .rp-seg button:last-child {
@@ -656,7 +773,7 @@
 	background: var(--sheet);
 	cursor: pointer;
 	font: inherit;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 }
 
@@ -703,7 +820,7 @@
 .rp-hint-note {
 	width: 100%;
 	margin: 4px 0 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-soft);
 }
 
@@ -719,7 +836,7 @@
 	flex-wrap: wrap;
 	gap: 4px 6px;
 	margin-top: 6px;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink);
 }
 
@@ -746,7 +863,7 @@
 	align-items: center;
 	gap: 8px;
 	padding: 4px 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	border-bottom: 1px solid var(--line);
 }
 
@@ -805,7 +922,7 @@
 	background: none;
 	cursor: pointer;
 	font: inherit;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--cinnabar);
 }
 
@@ -819,7 +936,7 @@
 	align-items: center;
 	gap: 6px;
 	margin: 0;
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 }
 
@@ -828,7 +945,7 @@
 	border: 1px solid var(--line);
 	border-radius: 4px;
 	background: var(--ui-subtle);
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--ink-soft);
 }
 
@@ -858,7 +975,7 @@
 
 .rp-font-preview {
 	min-width: 72px;
-	font-size: 22px;
+	font-size: var(--fs-2xl);
 	line-height: 1.2;
 	color: var(--ink);
 }
@@ -866,7 +983,7 @@
 /* 预览字样输入框：大字 + 当前生效字体，输入即预览（去掉重复的只读预览） */
 .rp-font-preview-input {
 	padding: 10px 12px;
-	font-size: 22px;
+	font-size: var(--fs-2xl);
 	line-height: 1.2;
 }
 
@@ -878,13 +995,13 @@
 }
 
 .rp-font-name {
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 	word-break: break-all;
 }
 
 .rp-font-meta {
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--ink-faint);
 }
 
@@ -899,7 +1016,7 @@
 	flex: 0 0 auto;
 	min-width: 56px;
 	padding: 4px 8px;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 }
 
 /* ---------- 右：预览 ---------- */
@@ -943,7 +1060,13 @@
 	display: flex; /* 内容区交给 page-block 撑满（P3-19 末行贴底） */
 	flex-direction: column;
 	padding: 20px;
-	background: var(--sheet);
+	/* 纸张底色 / 纹理（C-d）：变量由 #printContent 注入，屏幕 / 打印同源 */
+	background-color: var(--paper-bg, var(--sheet));
+	background-image: var(--paper-texture, none);
+	background-repeat: repeat;
+	background-size: 180px 180px; /* = core/paper.js PAPER_TILE_PX */
+	print-color-adjust: exact;
+	-webkit-print-color-adjust: exact;
 	border: 1px solid var(--line);
 	border-radius: 8px;
 	box-shadow: var(--shadow);
@@ -957,7 +1080,7 @@
 	max-width: 820px;
 	margin: 0 auto;
 	text-align: center;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-soft);
 }
 
@@ -970,7 +1093,7 @@
 .rp-count {
 	max-width: 820px;
 	margin: 10px auto 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-soft);
 }
 
@@ -1004,7 +1127,7 @@
 	width: 28px;
 	height: 28px;
 	border-radius: 7px;
-	font-size: 16px;
+	font-size: var(--fs-xl);
 	line-height: 1;
 	display: inline-flex;
 	align-items: center;
@@ -1029,7 +1152,7 @@
 	height: 28px;
 	padding: 0 6px;
 	border-radius: 7px;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	text-align: center;
 }
 
@@ -1049,7 +1172,7 @@
 	height: 28px;
 	padding: 0 10px;
 	border-radius: 7px;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-soft);
 }
 
@@ -1085,19 +1208,19 @@
 	border: 1px solid var(--line);
 	border-radius: 8px;
 	font-family: var(--font-kai);
-	font-size: 22px;
+	font-size: var(--fs-2xl);
 	color: var(--ink-faint);
 }
 
 .rp-empty-title {
 	margin: 0 0 4px;
-	font-size: 15px;
+	font-size: var(--fs-lg);
 	color: var(--ink);
 }
 
 .rp-empty-sub {
 	margin: 0 0 16px;
-	font-size: 12.5px;
+	font-size: var(--fs-sm);
 }
 
 .rp-empty-btn {
@@ -1200,7 +1323,7 @@
 	border: 1px solid var(--line);
 	border-left-width: 3px;
 	box-shadow: var(--shadow);
-	font-size: 13px;
+	font-size: var(--fs-md);
 	color: var(--ink);
 	animation: rp-toast-in .18s ease-out;
 }
@@ -1219,7 +1342,7 @@
 	color: #b03a2c;
 	cursor: pointer;
 	font: inherit;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 }
 
 .rp-toast-close {
@@ -1227,7 +1350,7 @@
 	border: 0;
 	background: none;
 	cursor: pointer;
-	font-size: 15px;
+	font-size: var(--fs-lg);
 	line-height: 1;
 	color: var(--ink-faint);
 }
@@ -1258,13 +1381,17 @@
 	color: var(--ink-soft);
 	cursor: pointer;
 	font: inherit;
-	font-size: 15px;
+	font-size: var(--fs-lg);
 	line-height: 1;
 }
 
 /* 窄屏（L3）：rail 常驻 44px 图标条，面板变为覆盖式抽屉（P1-4） */
 @media (max-width: 720px) {
+	/* 遮罩（z-index 20）是 .rp-shell 的子元素，同容器内 static 的 rail 会被盖住；
+	 * rail / 顶栏各自提升到遮罩之上，保证抽屉打开时仍可切分类 / 导出。 */
 	.rp-topbar {
+		position: relative;
+		z-index: 27;
 		flex-wrap: wrap;
 		gap: 8px;
 		padding: 8px 10px;
@@ -1272,10 +1399,13 @@
 
 	.rp-shell {
 		position: relative;
+		z-index: 25;
 		flex: 0 0 44px;
 	}
 
 	.rp-rail {
+		position: relative;
+		z-index: 26;
 		flex: 0 0 44px;
 		width: 44px;
 		padding: 8px 4px;
@@ -1329,15 +1459,305 @@
 	.rp-page-head h2 {
 		flex: 1 1 auto;
 	}
+
+	/* 小屏收窄预览留白，给纸张卡片让位（纸宽固定 px，超出部分横向滚动） */
+	.rp-preview {
+		padding: 12px;
+	}
+
+	.rp-page {
+		margin-bottom: 12px;
+	}
+
+	/* 抽屉打开时缩放条沉到遮罩之下，避免浮在暗化层上 */
+	.rp-zoombar {
+		z-index: 15;
+	}
 }
 
 /* 资源状态行（P2-9）：assets.js renderStatus 复用 */
 .field-hint {
 	margin: 4px 0 0;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--ink-soft);
 }
 
 .field-hint-error {
 	color: var(--cinnabar);
+}
+
+/* ---------- 分享二维码浮层（D4） ---------- */
+
+.rp-shareqr-scrim {
+	position: fixed;
+	inset: 0;
+	background: rgba(28, 26, 22, .5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 30;
+}
+
+.rp-shareqr-modal {
+	background: var(--sheet);
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	padding: 20px 22px;
+	max-width: 320px;
+	width: calc(100vw - 48px);
+	text-align: center;
+	box-shadow: 0 12px 32px rgba(20, 18, 14, .25);
+}
+
+.rp-shareqr-title {
+	margin: 0 0 4px;
+	font-size: var(--fs-lg);
+}
+
+.rp-shareqr-canvas {
+	display: block;
+	margin: 12px auto;
+	image-rendering: pixelated;
+	background: #fff;
+	border: 1px solid var(--line);
+}
+
+.rp-shareqr-note {
+	margin: 0 0 12px;
+	font-size: var(--fs-sm);
+	color: var(--ink-faint);
+}
+
+.rp-shareqr-warn {
+	color: var(--cinnabar);
+}
+
+.rp-shareqr-close {
+	min-width: 120px;
+}
+
+/* 字帖列表（M1） */
+.rp-docs-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.rp-docs-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+}
+
+.rp-docs-main {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 2px 10px;
+	flex: 1;
+	min-width: 0;
+	padding: 8px 10px;
+	text-align: left;
+	background: var(--sheet);
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.rp-docs-main:hover:not(:disabled) {
+	border-color: var(--ink-faint);
+}
+
+/* 打开中：与全应用 busy 态一致（禁用 + spinner 文案），不再只有隐式 class */
+.rp-docs-main.is-busy {
+	opacity: .6;
+	cursor: progress;
+}
+
+.rp-docs-busy {
+	display: inline-flex;
+	align-items: center;
+	margin-top: 4px;
+	font-size: var(--fs-sm);
+	color: var(--ink-soft);
+}
+
+.rp-docs-actions {
+	display: flex;
+	gap: 4px;
+	flex-shrink: 0;
+}
+
+.rp-btn-sm {
+	padding: 2px 8px;
+	font-size: var(--fs-xs);
+}
+
+.rp-docs-deleteline {
+	border: 1px dashed var(--cinnabar);
+	border-radius: 6px;
+	padding: 6px 10px;
+}
+
+.rp-docs-title {
+	font-size: var(--fs-md);
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rp-docs-meta {
+	font-size: var(--fs-xs);
+	color: var(--ink-faint);
+	text-align: right;
+}
+
+.rp-docs-path {
+	grid-column: 1 / -1;
+	font-size: var(--fs-xs);
+	color: var(--ink-faint);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 仅屏幕阅读器可见 */
+.rp-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.rp-docs-savebox {
+	margin-top: 10px;
+	padding: 10px;
+	background: var(--paper);
+	border: 1px dashed var(--line);
+	border-radius: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.rp-docs-savebox label {
+	font-size: var(--fs-sm);
+	color: var(--ink-faint);
+}
+
+.rp-docs-warn {
+	color: var(--cinnabar);
+}
+
+.rp-star {
+	color: var(--ink-faint);
+}
+
+.rp-star.is-on {
+	color: #C9930A;
+}
+
+/* 字体管理：搜索/排序/标签筛选与行内标签（F-a/F-b） */
+.rp-font-controls {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.rp-font-controls .rp-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.rp-font-sort {
+	flex: 0 0 128px;
+}
+
+.rp-font-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.rp-font-tags:not(.rp-font-tags-line) {
+	margin: 6px 0 10px;
+}
+
+.rp-font-tags-line {
+	margin-top: 3px;
+}
+
+.rp-font-tag {
+	padding: 1px 8px;
+	font-size: var(--fs-xs);
+	line-height: 1.6;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--paper);
+	color: var(--ink-faint);
+	cursor: pointer;
+}
+
+.rp-font-tag:hover {
+	border-color: var(--ink-faint);
+}
+
+.rp-font-tag.is-on {
+	background: var(--ink);
+	color: var(--paper);
+	border-color: var(--ink);
+}
+
+.rp-font-tag.is-static {
+	cursor: default;
+}
+
+/* 预设导入浮层（P-a） */
+.rp-presetio-scrim {
+	position: fixed;
+	inset: 0;
+	background: rgba(28, 26, 22, .5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 30;
+}
+
+.rp-presetio-modal {
+	background: var(--sheet);
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	padding: 20px 22px;
+	max-width: 420px;
+	width: calc(100vw - 48px);
+	text-align: left;
+	box-shadow: 0 12px 32px rgba(20, 18, 14, .25);
+}
+
+.rp-presetio-text {
+	width: 100%;
+	min-height: 88px;
+	resize: vertical;
+	margin-bottom: 10px;
+}
+
+/* 页级微调工具条（Z3，不打印） */
+.rp-page-tools {
+	display: flex;
+	gap: 10px;
+	justify-content: center;
+	margin-top: 6px;
+	/* 预览纸恒亮（打印友好）：纸面控件重置为明色朱砂，避免深色主题下提亮朱砂压白底不足 4.5 */
+	--cinnabar: #B03A2C;
 }

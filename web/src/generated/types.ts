@@ -26,7 +26,7 @@ export interface Config {
 	InkColor: string;
 	InkAlpha: number;
 	FontWeight: string;
-	FontURL: string;
+	fontURL: string;
 	FontSource: FontSource;
 	ResourceMode: string;
 	Page: PageSize;
@@ -53,8 +53,20 @@ export interface FontEntry {
 	source: string;
 	path: string;
 	size: unknown /* int64 */;
+	tags: string[];
 	created_at: string;
 	enabled: boolean;
+}
+
+export interface DocumentEntry {
+	id: unknown /* int64 */;
+	path: string;
+	title: string;
+	chars: number;
+	favorite: boolean;
+	archived: boolean;
+	created_at: string;
+	updated_at: string;
 }
 
 export interface PrintRequest {

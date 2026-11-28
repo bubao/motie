@@ -3,10 +3,16 @@
  * toastSlice 为纯 Redux slice（无 React / DOM 依赖），直接驱动 reducer。
  */
 import assert from 'node:assert/strict';
-import reducer, { pushToast, dismissToast } from '../web/src/toastSlice.mjs';
+import reducer, { pushToast, dismissToast, setBackendMode } from '../web/src/toastSlice.mjs';
 
 let state = reducer(undefined, { type: '@@INIT' });
-assert.deepStrictEqual(state, { toasts: [] });
+assert.deepStrictEqual(state, { toasts: [], backend: 'init' });
+
+/* 后端模式标记（U6-b）：本地模式在顶栏显示「本地模式」徽标 */
+state = reducer(state, setBackendMode('mock'));
+assert.strictEqual(state.backend, 'mock');
+state = reducer(state, setBackendMode('http'));
+assert.strictEqual(state.backend, 'http');
 
 state = reducer(state, pushToast({ type: 'success', text: '已导出 PDF。' }));
 assert.strictEqual(state.toasts.length, 1);

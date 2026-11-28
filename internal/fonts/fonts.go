@@ -20,6 +20,12 @@ import (
 // MaxFontSize 与前端 FontManager MAX_FONT_SIZE 一致（20MB）。
 const MaxFontSize = domain.MaxFontFileSize
 
+/* 个人字体标签上限：单标签字数与总个数（与前端 FONT_TAG_LIMITS 一致）。 */
+const (
+	maxTagRunes = 20
+	maxFontTags = 8
+)
+
 var (
 	ErrBadExt   = errors.New("不支持的字体格式（仅 ttf / otf / woff / woff2）")
 	ErrTooLarge = errors.New("字体超过 20MB 上限")
@@ -216,6 +222,32 @@ func (s *Service) Remove(id string) error {
 		_ = os.Remove(filepath.Join(s.baseDir, id+ext))
 	}
 	return nil
+}
+
+// UpdateTags 设置个人字体标签（trim、去空、去重；单个≤20 runes，总数≤8）。
+func (s *Service) UpdateTags(id string, tags []string) error {
+	clean := make([]string, 0, len(tags))
+	seen := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] || len(clean) >= maxFontTags {
+			continue
+		}
+		if runes := []rune(t); len(runes) > maxTagRunes {
+			t = string(runes[:maxTagRunes])
+		}
+		seen[t] = true
+		clean = append(clean, t)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.index {
+		if s.index[i].ID == id {
+			s.index[i].Tags = clean
+			return s.saveLocked()
+		}
+	}
+	return ErrNotFound
 }
 
 // Rename 只改显示名。

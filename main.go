@@ -1,6 +1,7 @@
 // motie 桌面版入口：embed 前端产物、装配组合根、启动 HTTP 内核并拉起窗口壳。
 //
-// 构建注入版本：go build -ldflags "-X main.Version=<version>"
+// 构建注入版本：go build -ldflags "-X main.Version=<version> ..."；
+// 版本真相源为仓库根 VERSION 文件，多源解析见 internal/version。
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"syscall"
 
 	"motie/internal/app"
+	"motie/internal/version"
 )
 
 //go:embed all:dist
@@ -25,8 +27,25 @@ var distFS embed.FS
 //go:embed all:lite
 var liteFS embed.FS
 
-// Version 与 internal/version 同名同值；发布时以 -X main.Version 注入。
-var Version = "0.0.1"
+//go:embed VERSION
+var embeddedVersion string
+
+/* 动态构建信息，编译时可通过 -ldflags 覆盖注入（-X main.Version=v0.0.2）。 */
+var (
+	Version   = ""
+	GitCommit = "dev"
+	BuildDate = "unknown"
+)
+
+func init() {
+	if Version == "" || Version == "dev" || Version == "unknown" {
+		Version = version.ResolveVersion(embeddedVersion)
+	}
+	/* 双包同值：internal/version 的解析结果供 updater / 元信息统一读取 */
+	version.Version = Version
+	version.GitCommit = GitCommit
+	version.BuildDate = BuildDate
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -78,9 +97,21 @@ func run() error {
 		watchExit(proc, cancel)
 	})
 	if errors.Is(err, ErrAlreadyRunning) {
-		/* 已有实例：为其打开新窗口后退出（服务由既有实例继续提供）。 */
-		preferred := effectivePort(*port, a)
-		_, werr := openWindow(context.Background(), windowURL(effectiveBind(*bind, a), preferred))
+		/* 已有实例：为其打开新窗口后退出（服务由既有实例继续提供）。
+		 * 实例可能因默认端口被占而顺延运行，优先用错误携带的实际端口构造地址。 */
+		runPort := effectivePort(*port, a)
+		var already *AlreadyRunningError
+		if errors.As(err, &already) {
+			runPort = already.Port
+		}
+		serveURL := windowURL(effectiveBind(*bind, a), runPort)
+		fmt.Fprintf(os.Stderr, "motie: 已有一个 motie 实例在运行（端口 %d）：%s\n", runPort, serveURL)
+		/* 与首进程一致：MOTIE_NO_WINDOW 时只报告不拉窗口（CI / 无头环境语义统一） */
+		if os.Getenv("MOTIE_NO_WINDOW") != "" {
+			fmt.Println("motie: 已跳过为既有实例拉起窗口（MOTIE_NO_WINDOW）")
+			return nil
+		}
+		_, werr := openWindow(context.Background(), serveURL)
 		return werr
 	}
 	return err
@@ -121,10 +152,21 @@ func effectivePort(flagPort int, a *app.App) int {
 	return cfg.DefaultPort
 }
 
-/* windowURL 组装窗口地址；回环地址统一用 127.0.0.1（localhost 可能解析到 ::1）。 */
-func windowURL(bind string, port int) string {
-	if bind == "" || bind == "localhost" || bind == "::1" {
-		bind = "127.0.0.1"
+/* clientHost 把监听地址映射为客户端可直连的主机名，供窗口 URL 与实例探测共用：
+ *   - 通配监听 0.0.0.0 / :: → 具体回环地址（0.0.0.0 作为目的地址在部分平台不可达，
+ *     且 IPv6 通配应对应 IPv6 回环，避免双栈差异）；
+ *   - localhost → 127.0.0.1（避免解析到 ::1 与 IPv4 监听不匹配）；
+ *   - 明确的 ::1 / [::1] 保持 IPv6 族（原实现把 ::1 转成 127.0.0.1，连不上纯 IPv6 监听）。 */
+func clientHost(bind string) string {
+	switch bind {
+	case "", "localhost", "0.0.0.0":
+		return "127.0.0.1"
+	case "::", "::1", "[::1]":
+		return "::1"
 	}
-	return fmt.Sprintf("http://%s/", net.JoinHostPort(bind, strconv.Itoa(port)))
+	return bind
+}
+
+func windowURL(bind string, port int) string {
+	return fmt.Sprintf("http://%s/", net.JoinHostPort(clientHost(bind), strconv.Itoa(port)))
 }

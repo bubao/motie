@@ -239,6 +239,43 @@ func (s *Service) pushRecent(path string) {
 	}
 }
 
+/* removeRecent 把路径从最近列表移除并落盘（删除文件后调用，避免索引复活）。 */
+func (s *Service) removeRecent(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.recent))
+	for _, p := range s.recent {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	s.recent = out
+	if s.store != nil {
+		_ = s.store.Save(out)
+	}
+}
+
+/* Delete 删除 txt / md 文件并从最近列表移除（路径先经安全校验）。
+ * 目录本身不动；仅允许文件。文件不存在返回 os.ErrNotExist。 */
+func (s *Service) Delete(path string) error {
+	clean, err := s.resolve(path)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%w: 拒绝删除目录", ErrUnsafePath)
+	}
+	if err := os.Remove(clean); err != nil {
+		return err
+	}
+	s.removeRecent(s.displayPath(clean))
+	return nil
+}
+
 /* ListRecent 按「最近打开在前」返回（新路径在 pushRecent 处置顶）。 */
 func (s *Service) ListRecent() []string {
 	s.mu.Lock()

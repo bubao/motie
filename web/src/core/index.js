@@ -5,7 +5,8 @@
 export {
 	STORAGE_KEY, PRESETS_KEY, FONTS_KEY,
 	ConfigSchema, DEFAULTS, TEMPLATES, TEMPLATE_KEYS,
-	SAMPLE_TEXT, SAMPLES, INK_COLORS, INK_COLOR_KEYS, INK_RGB, TRACE_COLOR_KEYS, TRACE_COLOR_NAMES,
+	SAMPLE_TEXT, SAMPLES, SAMPLE_FAVS_KEY, readSampleFavs, writeSampleFavs,
+	INK_COLORS, INK_COLOR_KEYS, INK_RGB, TRACE_COLOR_KEYS, TRACE_COLOR_NAMES,
 	ZG_TYPES, ZG_COLORS, ZG_LINE_MODES, ZG_LINE_MODE_NAMES, ZG_COLOR_VALUES,
 	ZG_DASH_STYLES, ZG_DASH_STYLE_NAMES, ZG_LINE_CAPS, ZG_LINE_CAP_NAMES,
 	ZG_TYPE_HINTS, ZG_SCHEMES,
@@ -25,14 +26,18 @@ export {
 	MIN_TRACE_DECAY, MAX_TRACE_DECAY, MIN_ZG_LINE_SCALE, MAX_ZG_LINE_SCALE,
 	MIN_TRACE_COUNT, MAX_TRACE_COUNT, MIN_COLS, MAX_COLS, MIN_GAP, MAX_GAP,
 	MIN_INK_ALPHA, MAX_INK_ALPHA, MIN_CHAR_OFFSET, MAX_CHAR_OFFSET,
-	MIN_CHAR_SCALE, MAX_CHAR_SCALE,
-	normalize, normalizeInt, normalizeFloat, normalizeSize, normalizeField,
+	MIN_CHAR_SCALE, MAX_CHAR_SCALE, MIN_INK_WIDTH, MAX_INK_WIDTH, MIN_PNG_DPI, MAX_PNG_DPI,
+	SAFE_PRINT_WIDTH_MM,
+	PAPER_COLORS, PAPER_COLOR_KEYS, PAPER_COLOR_NAMES, PAPER_TEXTURES, PAPER_TEXTURE_NAMES,
+	normalize, normalizeInt, normalizeFloat, normalizeSize, normalizeField, traceAlphaOf,
 	sanitizeFontURL, sanitizeHexColor, resolveZgOptions, guessFontFormat, normalizeFontSource,
 	loadConfig, saveConfig, snapshotConfig, loadPresets, savePreset, deletePreset, renamePreset
 } from './config.js';
 
-export { ContentModel, Layout } from './content.js';
+export { ContentModel, Layout, hasExportableContent } from './content.js';
 export { buildZgSvg, getZgBackground } from './zg-bg.js';
+export { paperBgOf, paperTextureUri, PAPER_TILE_PX } from './paper.js';
+export { printScaleOf } from './print-scale.js';
 export { buildControlSvg, getControlBackground, CONTROL_PATHS } from './control.js';
 export {
 	STROKE_LIBRARY, STROKE_KEYS, STROKE_NAMES, strokePath,
@@ -46,6 +51,17 @@ export {
 	setResourceMode, loadHanziWriter, resetHanziWriter,
 	loadPinyinLib, renderStatus as renderAssetStatus, applyAssets, describeAssets
 } from './assets.js';
-export { loadPinyin, resetPinyin, getPinyin, isPinyinReady } from './pinyin.js';
+export { loadPinyin, resetPinyin, getPinyin, getPinyinArray, getLinePinyins, isPinyinReady } from './pinyin.js';
 export { Stroke, extractMedians, loadCharData, getStrokeMedians, resetStrokeData } from './stroke-order.js';
-export { renderPages, pdfFilename } from './pdf.js';
+export { renderPages, pdfFilename, pngFilename } from './pdf.js';
+export {
+	SHARE_VERSION, SHARE_HASH_KEY, MAX_SHARE_URL_CHARS,
+	encodeShare, decodeShare, shareFromLocation, copyText
+} from './share.js';
+export {
+	PRESET_VERSION, PRESET_HASH_KEY, PRESETS_KIND, MAX_PRESET_NAME,
+	normalizePresetData, encodePresetShare, decodePresetShare,
+	presetsToJson, parsePresetsJson, mergePresets
+} from './presetShare.js';
+export { parsePageRange, applyPrintRange, clearPrintRange } from './printRange.js';
+export { buildQrMatrix, drawQrCanvas } from './qrShare.js';

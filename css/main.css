@@ -4,7 +4,7 @@
 	--paper: #F5F2EA;
 	--sheet: #FFFEF8;
 	--ink: #23262B;
-	--ink-soft: #6E737B;
+	--ink-soft: #666D78; /* 与 --paper 对比度 ≥4.5（WCAG AA，U1） */
 	--ink-faint: #686D75;
 	--line: #E3DCCB;
 	--cinnabar: #B03A2C;
@@ -21,6 +21,13 @@
 	--ui-active-warm: #FDF3F2;  /* 选中态暖底（模板 / 字体） */
 	--font-kai: "Kaiti SC", "STKaiti", "KaiTi", "TW-Kai", "DFKai-SB", serif;
 	--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+	/* 界面字号档（F2）：界面控件 / 标题 / 辅助共用；预览纸内字号由毫米值派生，不入档 */
+	--fs-xs: 11px;   /* 辅助小字：模板别名、字段提示、标签 */
+	--fs-sm: 12px;   /* 控件默认：按钮、输入、列表项、页码 */
+	--fs-md: 13px;   /* 正文级控件：字段标题、折叠标题、面板正文 */
+	--fs-lg: 15px;   /* 区块标题 / 浮层标题 */
+	--fs-xl: 16px;   /* 页面标题 / 品牌名 */
+	--fs-2xl: 22px;  /* 展示用：字体预览 / 空态图标 */
 }
 
 /* 深色主题：只覆盖变量，组件样式不变（由 html 上的 data-theme 驱动） */
@@ -37,7 +44,13 @@ html[data-theme="dark"] {
 	--dot: rgba(255, 255, 255, .05);
 	--ui-subtle: #262A30;
 	--ui-active: #2A2E34;
-	--ui-active-warm: #3A2A28;
+	--ui-active-warm: #2E1F1D;
+}
+
+/* 深色主题主按钮改用更深的朱砂底，保证白字对比度 ≥4.5（WCAG AA，U1） */
+html[data-theme="dark"] .rp-btn-primary {
+	background: var(--cinnabar-deep);
+	border-color: var(--cinnabar-deep);
 }
 
 * {
@@ -88,6 +101,18 @@ body {
 	font-weight: 600;
 	letter-spacing: .12em;
 	color: var(--ink);
+}
+
+/* 落款行（B4）：每页右下角小字，位于页脚信息之上（Preview 中插在 .rp-page-no 前）。
+ * 颜色取 --ink-soft（与 canvas 端 rgba(107,114,128,.9) 同观感），字体走楷体栈。 */
+.sheet-signature {
+	margin: 10px 0 0;
+	text-align: right;
+	font-family: var(--font-kai);
+	font-size: calc(var(--grid-size) * .36);
+	line-height: 1.2;
+	letter-spacing: .08em;
+	color: var(--ink-soft);
 }
 
 /* 一个字格 = 字格方块（拼音格的拼音写在格内上区，见 .cell.has-pinyin）；
@@ -277,6 +302,7 @@ body {
 	height: calc(var(--grid-size) * var(--cell-ratio, 1));
 	font-family: var(--font-kai);
 	font-weight: var(--char-weight, 400); /* A1 字体粗细：normal 400 / bold 700，屏幕 / 打印 / PDF 同源 */
+	-webkit-text-stroke: var(--char-stroke, 0em); /* C-c 笔画加粗：字形描边宽度 = 字号 × InkWidth/1000，先描后填 */
 	font-size: calc(var(--grid-size) * var(--char-scale, .725));      /* 58 / 80，默认 0.725 */
 	line-height: calc(var(--grid-size) * var(--cell-ratio, 1) * 1.0625);  /* 85 / 80，随格高缩放 */
 	text-align: center;
@@ -487,6 +513,7 @@ body {
 .overlay-stage-char {
 	line-height: 1;
 	font-weight: var(--char-weight, 400); /* A1 字体粗细：与字帖格子同源（变量由 BigPreview 传入） */
+	-webkit-text-stroke: var(--char-stroke, 0em); /* C-c 笔画加粗：与字帖格子同源（变量由 BigPreview 传入） */
 	/* 与字帖格子同一偏移（格倍数 × 画布格边长） */
 	transform: translate(calc(min(58vmin, 280px) * var(--char-dx, 0)), calc(min(58vmin, 280px) * var(--char-dy, 0)));
 }
@@ -532,7 +559,7 @@ body.custom-font .overlay-stage {
 		--paper: #F5F2EA;
 		--sheet: #FFFEF8;
 		--ink: #23262B;
-		--ink-soft: #6E737B;
+		--ink-soft: #666D78; /* 与 --paper 对比度 ≥4.5（WCAG AA，U1） */
 	--ink-faint: #686D75;
 		--line: #E3DCCB;
 		--cinnabar: #B03A2C;
@@ -560,6 +587,13 @@ body.custom-font .overlay-stage {
 	#printContent,
 	#printContent.is-hidden {
 		display: block !important;
+	}
+
+	/* 打印缩放（C-f）：页宽超出安全宽度时等比缩小（transform 不改变布局占位，
+	 * 每页仍落在原 @page 区域；Safari / WKWebView 均支持 transform，zoom 不支持） */
+	#printContent {
+		transform: scale(var(--print-zoom, 1));
+		transform-origin: top center;
 	}
 
 	/* 内容里的空行 = 分页 */

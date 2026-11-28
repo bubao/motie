@@ -29,7 +29,7 @@ func TestParseDomainCollectsDTOs(t *testing.T) {
 		names[f.Name] = true
 	}
 	/* json tag 必须对齐前端键名 */
-	for _, k := range []string{"Theme", "ZgType", "FontURL", "FontSource", "Page", "Margin", "DefaultPort", "BindAddr"} {
+	for _, k := range []string{"Theme", "ZgType", "fontURL", "FontSource", "Page", "Margin", "DefaultPort", "BindAddr"} {
 		if !names[k] {
 			t.Errorf("Config 缺少字段 %s", k)
 		}

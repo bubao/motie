@@ -25,12 +25,12 @@
 - `web/src/core/pinyin.js`：拼音标注与状态
 - `web/src/core/stroke-order.js`：笔顺动画封装（HanziWriter 按需注入与降级）
 - `web/src/core/stroke-library.js`：17 种基本笔画矢量剪影库（笔画字帖模式，非汉字字形数据）
-- `web/src/core/pdf.js`：A4 PDF 导出（jsPDF 构建时编译绑定，经 `initPdf` 注入）
+- `web/src/core/pdf.js`：逐页光栅化为 JPEG 图像序列 + 纸张元信息（PDF 由桌面内核组装；纯浏览器无内核，导出入口置灰）
 - `web/src/hooks/useSheetLayout.js` / `useZgBackground.js`：版式与字格背景的 React 封装
 
 ## 第三方库
 
-jsPDF 2.5.1（npm，编译绑定进完整版产物）、HanziWriter 2.2.2（笔顺，CDN / vendor）、pinyin-pro 3.29.5（拼音，CDN / vendor）。`pinyin-util` 曾为练字版内联依赖，T5 精简后已不再使用，依赖已从 `package.json` 移除。
+HanziWriter 2.2.2（笔顺，CDN / vendor）、pinyin-pro 3.29.5（拼音，CDN / vendor）。jsPDF 曾用于前端 PDF 合成，已改由 Go 内核组装（JPEG 直通 DCTDecode），依赖已移除。`pinyin-util` 曾为练字版内联依赖，T5 精简后已不再使用，依赖已从 `package.json` 移除。
 
 ## 打印
 

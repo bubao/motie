@@ -16,6 +16,7 @@ func (p *windowProc) Done() <-chan struct{} { return p.done }
 
 /* openWindow 拉起显示 url 的窗口。约定：
  *   - 各平台优先拉起同目录原生壳（motie.app / motie-shell.exe / motie-shell），未安装则回退 Chromium 系浏览器；
+ *     注：当前仅 mac 提供原生壳，Win/Linux 挂载点保留但壳未实现（见 §11 阶段 3）；
  *   - 返回 nil 表示该窗口无可跟踪子进程（原生壳自管生命周期，或 opener 类命令无法跟踪），主服务不受窗口影响；
  *   - 返回 proc 表示跟踪浏览器进程：窗口关闭（进程退出）即取消主 Context。 */
 func openWindow(parent context.Context, url string) (*windowProc, error) {

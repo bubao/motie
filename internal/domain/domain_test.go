@@ -43,7 +43,7 @@ func TestConfigJSONKeysMatchFrontend(t *testing.T) {
 	}
 	want := []string{
 		"Theme", "Template", "ZgType", "InkColor", "InkAlpha", "FontWeight",
-		"FontURL", "FontSource", "ResourceMode", "Page", "Margin",
+		"fontURL", "FontSource", "ResourceMode", "Page", "Margin",
 		"DefaultPort", "BindAddr",
 	}
 	for _, k := range want {

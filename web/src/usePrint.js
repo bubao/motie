@@ -1,5 +1,7 @@
 import { useSelector, useDispatch } from 'react-redux';
 import { pushToast } from './store.js';
+/* 这里用 isDesktopEnv（原生窗口）而非接入模式：只有 WKWebView 壳才有 Swift 打印桥；
+ * web / 本地模式即便探测到内核也仍是浏览器 window.print()。 */
 import { isDesktopEnv } from './ipc/client.ts';
 
 /* 打印：与「导出 PDF」保持同一前置校验（P3-15）。

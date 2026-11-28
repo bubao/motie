@@ -215,7 +215,7 @@ func emitInterface(sb *strings.Builder, si structInfo, structs map[string]struct
 
 /* 生成顺序：被依赖的嵌套结构在前（PageSize/Margin/FontSource → Config → ConfigResponse）。 */
 func genTypesTS(structs map[string]structInfo, events []eventConst) []byte {
-	order := []string{"PageSize", "Margin", "FontSource", "Config", "ServerMeta", "WorkspaceFile", "FontEntry", "PDFExportRequest", "PrintRequest", "ConfigResponse"}
+	order := []string{"PageSize", "Margin", "FontSource", "Config", "ServerMeta", "WorkspaceFile", "FontEntry", "DocumentEntry", "PDFExportRequest", "PrintRequest", "ConfigResponse"}
 	var sb strings.Builder
 	sb.WriteString("// 由 cmd/typegen 从 internal/domain 生成，请勿手改（修改 Go 结构后运行 go run ./cmd/typegen）。\n")
 	sb.WriteString("// 契约镜像：zitie.config 键名（Page/Margin/FontSource 为嵌套对象）。\n\n")

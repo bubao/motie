@@ -51,16 +51,15 @@ const statusEl = () => document.getElementById('assetStatus');
 export const renderStatus = () => {
 	const el = statusEl();
 	if (!el) return;
-	const list = [];
-	if (isLocal()) {
-		['hanziWriter', 'pinyin'].forEach((name) => {
-			if (failed[name]) list.push(LABELS[name]);
-		});
-	}
+	const local = isLocal();
+	const list = ['hanziWriter', 'pinyin'].filter((name) => failed[name]).map((name) => LABELS[name]);
 	if (list.length) {
-		el.textContent = `本地模式：${list.join('、')} 缺失，已回退 CDN。`;
+		/* 失败可见（U3 离线降级）：CDN 模式失败多为离线 / 被拦；本地模式失败会自动回退 CDN */
+		el.textContent = local
+			? `本地模式：${list.join('、')} 缺失，已回退 CDN。`
+			: `CDN 资源加载失败（可能离线）：${list.join('、')}；可切到本地 vendor 或恢复网络后重试。`;
 		el.className = 'field-hint field-hint-error';
-	} else if (isLocal()) {
+	} else if (local) {
 		el.textContent = '本地 vendor 模式（http 托管可用）；未通过 npm run vendor 下载时会自动回退 CDN。';
 		el.className = 'field-hint';
 	} else {
@@ -132,11 +131,15 @@ export const loadPinyinLib = async () => {
 	try {
 		return await import(/* @vite-ignore */ target);
 	} catch {
-		if (target === CDN_URLS.pinyin) return null;
+		if (target === CDN_URLS.pinyin) {
+			markFailed('pinyin'); /* CDN 也失败：状态行提示离线降级（U3） */
+			return null;
+		}
 		markFailed('pinyin');
 		try {
 			return await import(/* @vite-ignore */ CDN_URLS.pinyin);
 		} catch {
+			markFailed('pinyin');
 			return null;
 		}
 	}

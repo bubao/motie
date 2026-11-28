@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 )
 
-/* openWindowPlatform：优先与主程序同目录的原生壳 motie-shell.exe（WebView2 宿主，
- * 见 native_macos/main.swift 的同构实现）；未安装则回退 Chromium 系浏览器 --app
- * 独立窗口（Edge/Chrome/Brave/Vivaldi/Opera）；均无则系统默认浏览器。
+/* openWindowPlatform：若与主程序同目录存在原生壳 motie-shell.exe（WebView2 宿主），
+ * 优先拉起。该壳尚未随仓库 / 分发包提供（mac 有 Motie.app，见 native_macos/main.swift），
+ * 故当前一律回退 Chromium 系浏览器 --app 独立窗口（Edge/Chrome/Brave/Vivaldi/Opera）；
+ * 均无则系统默认浏览器。此处保留壳挂载点，壳就位后调用方无需改动。
  *
  * 原生壳返回 nil（生命周期由壳自身管理）；浏览器分支返回可跟踪进程——关闭即取消主 Context；
  * opener（cmd /c start）不可跟踪，同样返回 nil，避免命令立即退出被误判为关窗而杀掉服务。 */

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"unicode/utf8"
 
 	"motie/internal/domain"
 	"motie/internal/files"
@@ -56,6 +57,11 @@ func (s *Server) handleFilesPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.deps.Bus != nil {
 		s.deps.Bus.Publish(domain.EventFileSaved, f)
+	}
+	/* 内容源落盘后同步字数快照进字帖索引（仅刷 chars / updated_at，保留用户命名与收藏）。
+	 * 索引失败不应让已成功的文件保存报错，静默降级。 */
+	if s.deps.Library != nil {
+		_ = s.deps.Library.SyncContentStats(f.Path, utf8.RuneCountInString(f.Content))
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true", "path": f.Path})
 }

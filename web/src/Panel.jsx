@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { applyFields, importConfig, pushToast, redoContent, setContent, setField, switchMode as switchModeAction, undoContent } from './store.js';
 import { FontManager } from './FontManager.jsx';
+import { DocsPage } from './DocsPage.jsx';
 import { SchemaRange, SchemaPercentRange } from './controls.jsx';
+import { useFocusTrap } from './hooks/useFocusTrap.js';
 import {
 	ConfigSchema,
 	ContentModel,
@@ -12,8 +14,16 @@ import {
 	INK_COLOR_KEYS,
 	TRACE_COLOR_KEYS,
 	TRACE_COLOR_NAMES,
+	PAPER_COLORS,
+	PAPER_COLOR_KEYS,
+	PAPER_COLOR_NAMES,
+	PAPER_TEXTURES,
+	PAPER_TEXTURE_NAMES,
 	SAMPLE_TEXT,
 	SAMPLES,
+	SAMPLE_FAVS_KEY,
+	readSampleFavs,
+	writeSampleFavs,
 	TEMPLATES,
 	ZG_COLOR_VALUES,
 	ZG_COLORS,
@@ -47,10 +57,21 @@ import {
 	deletePreset,
 	renamePreset,
 	snapshotConfig,
-	renderAssetStatus
+	renderAssetStatus,
+	encodeShare,
+	copyText,
+	MAX_SHARE_URL_CHARS,
+	buildQrMatrix,
+	drawQrCanvas,
+	encodePresetShare,
+	decodePresetShare,
+	presetsToJson,
+	parsePresetsJson,
+	mergePresets
 } from './core/index.js';
 import { useSheetLayout } from './hooks/useSheetLayout.js';
-import { sharedClient, isDesktopEnv } from './ipc/client.ts';
+import { sharedClient, readBackendPort, writeBackendPort, clearBackendPort, probeBackendPort, DEFAULT_BACKEND_PORT } from './ipc/client.ts';
+import { encodeBackup, parseBackup, mergeBackup } from './core/backup.ts';
 
 /* 文件名清洗：与 Go pdf.SafeFilename 同口径（/ \ : * ? " < > | → _），避免被当成路径分隔 */
 var sanitizeFileName = function (name) {
@@ -114,6 +135,7 @@ function RailIcon({ d }) {
 
 const ICONS = {
 	content: <RailIcon d={<><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></>} />,
+	docs: <RailIcon d={<><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z" /><path d="M4 19a2 2 0 0 1 2-2h13" /></>} />,
 	layout: <RailIcon d={<><rect x="4" y="4" width="16" height="16" rx="1.5" /><path d="M12 4v16M4 12h16" /></>} />,
 	grid: <RailIcon d={<><rect x="4" y="4" width="16" height="16" rx="1.5" /><rect x="9" y="9" width="6" height="6" /></>} />,
 	text: <RailIcon d={<><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z" /><path d="M14 7l3 3" /></>} />,
@@ -124,11 +146,18 @@ const ICONS = {
 
 const RAIL_MAIN = [
 	{ key: 'content', name: '内容' },
+	{ key: 'docs', name: '字帖' },
 	{ key: 'layout', name: '版式' },
 	{ key: 'grid', name: '字格' },
 	{ key: 'text', name: '文字' },
 	{ key: 'output', name: '输出' }
 ];
+
+/* 接入模式（U6）：字体库 / 字帖 / 预设 / PDF / 导出 Kindle / 检查更新等能力门统一读
+ * ui.backend，与顶栏「本地模式」徽标、SW 注册策略同源；不再按「谁托管」硬切。 */
+function useBackendOnline() {
+	return useSelector(function (s) { return !!(s.ui && s.ui.backend === 'http'); });
+}
 
 function Group({ title, children }) {
 	return (
@@ -204,6 +233,9 @@ function PageGroup() {
 		var n = Number(value);
 		return isFinite(n) ? n : fallback;
 	}
+	function field(key, value) {
+		dispatch(setField({ key: key, value: value }));
+	}
 
 	return (
 		<Group title="纸张">
@@ -223,6 +255,57 @@ function PageGroup() {
 					})}
 					<option value="custom">自定义</option>
 				</select>
+			</div>
+			<div className="rp-field">
+				<label>纸张底色</label>
+				<div className="rp-zg-colors">
+					<div className="rp-swatches">
+						{PAPER_COLOR_KEYS.map(function (key) {
+							var hex = PAPER_COLORS[key];
+							var tint = sanitizeHexColor(config.PaperTint) || '';
+							var active = tint || PAPER_COLORS[config.PaperColor] || PAPER_COLORS.white;
+							return (
+								<button
+									type="button"
+									key={key}
+									title={PAPER_COLOR_NAMES[key]}
+									aria-label={'纸张底色预设 ' + PAPER_COLOR_NAMES[key]}
+									aria-pressed={active === hex}
+									className={active === hex ? 'is-active' : ''}
+									style={{ background: hex }}
+									onClick={function () { field('PaperColor', key); field('PaperTint', ''); }}
+								/>
+							);
+						})}
+					</div>
+					<input
+						type="color"
+						className="rp-color-input"
+						aria-label="自定义纸张颜色"
+						title="自定义颜色"
+						value={sanitizeHexColor(config.PaperTint) || PAPER_COLORS[config.PaperColor] || PAPER_COLORS.white}
+						onChange={function (e) { field('PaperTint', e.target.value); }}
+					/>
+				</div>
+				<p className="rp-hint-note">自定义色覆盖预设；打印与导出 PDF 同源。</p>
+			</div>
+			<div className="rp-field">
+				<label>纸张纹理</label>
+				<div className="rp-tpl">
+					{PAPER_TEXTURES.map(function (key) {
+						return (
+							<button
+								type="button"
+								key={key}
+								className={config.PaperTexture === key ? 'is-active' : ''}
+								aria-pressed={config.PaperTexture === key}
+								onClick={function () { field('PaperTexture', key); }}
+							>
+								{PAPER_TEXTURE_NAMES[key]}
+							</button>
+						);
+					})}
+				</div>
 			</div>
 			<div className="rp-field">
 				<label htmlFor="pageWidth">宽（mm）</label>
@@ -314,6 +397,38 @@ function MetaGroup() {
 				/>
 				<label htmlFor="showPageNo">显示页码（屏幕 / 打印 / PDF）</label>
 			</div>
+			<div className="rp-field rp-check">
+				<input
+					id="showScore"
+					type="checkbox"
+					checked={config.ShowScore}
+					onChange={function (e) { field('ShowScore', e.target.checked); }}
+				/>
+				<label htmlFor="showScore">显示得分栏（每页底部「得分：＿＿＿＿」）</label>
+			</div>
+			{/* 落款行（B4）：每页右下角小字；文本留空按未开启处理 */}
+			<div className="rp-field rp-check">
+				<input
+					id="showSignature"
+					type="checkbox"
+					checked={config.ShowSignature}
+					onChange={function (e) { field('ShowSignature', e.target.checked); }}
+				/>
+				<label htmlFor="showSignature">显示落款行（每页右下角）</label>
+			</div>
+			{config.ShowSignature && (
+				<div className="rp-field">
+					<label htmlFor="signatureText">落款文本（可选）</label>
+					<input
+						id="signatureText"
+						className="rp-input"
+						maxLength={24}
+						placeholder="如：甲辰年冬月书于灯下"
+						value={config.SignatureText}
+						onChange={function (e) { field('SignatureText', e.target.value); }}
+					/>
+				</div>
+			)}
 		</Group>
 	);
 }
@@ -321,10 +436,13 @@ function MetaGroup() {
 /* 内容工具（C1–C4）：示例库与导入导出收进「内容工具」折叠区，「清空」需二次确认；
    重复字统计独立折叠。导入只做纯文本读取，导出用 Blob 下载。 */
 function ContentTools({ textareaRef }) {
+	const online = useBackendOnline();
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
 	const fileRef = useRef(null);
 	const [confirming, setConfirming] = useState(false);
+	/* 按字数截取（A3 / web-features.md）：输入 N，保留内容前 N 字 */
+	const [truncateValue, setTruncateValue] = useState('');
 	/* 重复字统计：仅内容变化时重算（P3-13） */
 	const stats = useMemo(function () {
 		return ContentModel.charStats(config.Content, config.Mode);
@@ -332,6 +450,18 @@ function ContentTools({ textareaRef }) {
 
 	/* 当前版式每页行数：用于「插入空白页」按版式生成一整页空临格（依赖收敛在 hook 内） */
 	var layoutInfo = useSheetLayout(config);
+
+	/* 示例库（A1 / web-features.md）：搜索 + 分类 chips + 本地收藏。仅列当前模式示例，避免跨模式误填 */
+	const [sampleQuery, setSampleQuery] = useState('');
+	const [sampleCat, setSampleCat] = useState('全部');
+	const [sampleFavs, setSampleFavs] = useState(function () { return readSampleFavs(); });
+	function toggleSampleFav(name) {
+		var next = sampleFavs.indexOf(name) !== -1
+			? sampleFavs.filter(function (n) { return n !== name; })
+			: sampleFavs.concat([name]);
+		setSampleFavs(next);
+		writeSampleFavs(next);
+	}
 
 	/* 在内容框光标处插入文本（默认一个空格 = 一个空临格），并把光标移到插入内容之后 */
 	function insertAtCursor(text) {
@@ -358,6 +488,16 @@ function ContentTools({ textareaRef }) {
 	}
 
 	/* 在内容框光标处插入一个空行（= 分页）：行首补单个换行，行中补两个换行 */
+	/* 按字数截取（A3）：非法值忽略；合法则覆盖 Content（历史入栈可撤销） */
+	function doTruncate() {
+		var n = parseInt(truncateValue, 10);
+		if (!n || n < 1) return;
+		if (n > config.Content.length) n = config.Content.length;
+		dispatch(setField({ key: 'Content', value: config.Content.slice(0, n) }));
+		setTruncateValue(String(n));
+		dispatch(pushToast({ type: 'success', text: '已截取前 ' + n + ' 字（原内容已入撤销历史，可 Ctrl+Z 恢复）。' }));
+	}
+
 	function insertBlankLine() {
 		var el = textareaRef && textareaRef.current;
 		var text = config.Content;
@@ -391,6 +531,20 @@ function ContentTools({ textareaRef }) {
 		window.dispatchEvent(new CustomEvent('zitie:goto-last-page'));
 	}
 
+	/* 粘贴长文一键清洗（Z4）：trim / 折叠空行 / 汉字后半角标点转全角；空格（空临格）不动 */
+	function cleanContent() {
+		var res = ContentModel.cleanImportedText(config.Content, config.Mode);
+		if (res.text === config.Content) {
+			dispatch(pushToast({ type: 'info', text: '内容已是干净状态，无需清洗。' }));
+			return;
+		}
+		dispatch(setContent(res.text));
+		var parts = [];
+		if (res.blankLines > 0) parts.push('折叠空行 ' + res.blankLines + ' 处');
+		if (res.puncts > 0) parts.push('统一标点 ' + res.puncts + ' 处');
+		dispatch(pushToast({ type: 'success', text: '已清洗排版' + (parts.length ? '：' + parts.join('、') : '') + '（可撤销）。' }));
+	}
+
 	function onFileChange(e) {
 		var file = e.target.files && e.target.files[0];
 		if (!file) return;
@@ -399,8 +553,8 @@ function ContentTools({ textareaRef }) {
 			var text = String(reader.result || '');
 			dispatch(setContent(text));
 			e.target.value = ''; /* 允许再次选择同一文件 */
-			/* 桌面端：同步落盘到受控 workspace/，加入最近文件（失败不阻断导入） */
-			if (isDesktopEnv()) {
+			/* 内核在线：同步落盘到受控 workspace/，加入最近文件（失败不阻断导入）；本地模式仅内存/浏览器侧 */
+			if (online) {
 				var name = sanitizeFileName(file.name).replace(/\.(md|markdown)$/i, '.md');
 				sharedClient().writeFile({ path: 'workspace/' + name.replace(/\.[^.]*$/, '') + (/\.md$/i.test(name) ? '.md' : '.txt'), content: text })
 					.then(function () {
@@ -421,8 +575,8 @@ function ContentTools({ textareaRef }) {
 
 	function onExport() {
 		var name = sanitizeFileName(config.Title || '墨帖内容');
-		/* 桌面端：写受控 export/（Go 内核落盘），失败回退浏览器下载 */
-		if (isDesktopEnv()) {
+		/* 内核在线：写受控 export/（Go 内核落盘），失败回退浏览器下载 */
+		if (online) {
 			sharedClient().writeFile({ path: 'export/' + name + '.txt', content: config.Content })
 				.then(function () {
 					dispatch(pushToast({ type: 'success', text: '已导出到「导出」目录：' + name + '.txt' }));
@@ -456,31 +610,87 @@ function ContentTools({ textareaRef }) {
 		dispatch(pushToast({ type: 'success', text: '已清空，可按 Ctrl/Cmd+Z 撤销。' }));
 	}
 
-	/* 示例库按当前字帖类型过滤；快捷形态为全局形态表（含跨模式项，点击切换类型 + 版式） */
-	var samples = SAMPLES.filter(function (s) { return s.mode === config.Mode; });
+	/* 示例库候选（仅当前模式）→ 分类集合 → 搜索 / 分类过滤 → 收藏置顶 */
+	var samplesAll = SAMPLES.filter(function (s) { return s.mode === config.Mode; });
+	var sampleCats = useMemo(function () {
+		var seen = {};
+		samplesAll.forEach(function (s) { if (s.cat) seen[s.cat] = true; });
+		return ['全部'].concat(Object.keys(seen));
+	}, [config.Mode]);
+	var sampleQueryNorm = sampleQuery.trim();
+	var samples = samplesAll.filter(function (s) {
+		if (sampleCat !== '全部' && s.cat !== sampleCat) return false;
+		if (sampleQueryNorm
+			&& s.name.indexOf(sampleQueryNorm) === -1
+			&& s.text.indexOf(sampleQueryNorm) === -1) return false;
+		return true;
+	});
+	samples.sort(function (a, b) {
+		var fa = sampleFavs.indexOf(a.name) !== -1 ? 0 : 1;
+		var fb = sampleFavs.indexOf(b.name) !== -1 ? 0 : 1;
+		return fa - fb;
+	});
+	/* 快捷形态为全局形态表（含跨模式项，点击切换类型 + 版式） */
 	var forms = CONTENT_FORMS;
 
 	return (
 		<>
-			{/* 示例库高频，默认展开（P2-7），无需二次点击 */}
-		{samples.length > 0 && (
+		{/* 示例库高频，默认展开（P2-7）；搜索 / 分类 / 收藏（A1） */}
+		{samplesAll.length > 0 && (
 			<details className="rp-fold" open>
 				<summary>示例库</summary>
 				<div className="rp-fold-body">
 					<div className="rp-field">
-						<label htmlFor="sampleSelect">选择示例</label>
-						<select
-							id="sampleSelect"
+						<label htmlFor="sampleSearch">搜索示例</label>
+						<input
+							id="sampleSearch"
 							className="rp-input"
-							value=""
-							onChange={function (e) {
-								var sample = samples.filter(function (s) { return s.name === e.target.value; })[0];
-								if (sample) dispatch(setContent(sample.text));
-							}}
-						>
-							<option value="">选择示例…</option>
-							{samples.map(function (s) { return <option key={s.name} value={s.name}>{s.name}</option>; })}
-						</select>
+							type="search"
+							placeholder="名称或内容关键词"
+							value={sampleQuery}
+							onChange={function (e) { setSampleQuery(e.target.value); }}
+						/>
+					</div>
+					<div className="rp-field">
+						<label>分类</label>
+						<div className="rp-schemes">
+							{sampleCats.map(function (cat) {
+								var active = sampleCat === cat;
+								return (
+									<button key={cat} type="button"
+										className={'rp-sample-cat' + (active ? ' is-active' : '')}
+										aria-pressed={active}
+										onClick={function () { setSampleCat(cat); }}>{cat}</button>
+								);
+							})}
+						</div>
+					</div>
+					<div className="rp-sample-list" role="group" aria-label="示例列表">
+						{samples.length === 0 ? (
+							<p className="rp-hint-note">无匹配示例。</p>
+						) : samples.map(function (s) {
+							var fav = sampleFavs.indexOf(s.name) !== -1;
+							return (
+								<div key={s.name} className="rp-sample-item">
+									<button type="button" className="rp-sample-main" title={s.text}
+										onClick={function () { dispatch(setContent(s.text)); }}>
+										<span className="rp-sample-name">{s.name}</span>
+										<span className="rp-sample-text">{s.text}</span>
+									</button>
+									<button type="button"
+										className={'rp-sample-star' + (fav ? ' is-on' : '')}
+										aria-pressed={fav}
+										aria-label={(fav ? '取消收藏 ' : '收藏 ') + s.name}
+										onClick={function (e) { e.stopPropagation(); toggleSampleFav(s.name); }}>
+										<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+											fill={fav ? 'currentColor' : 'none'} stroke="currentColor"
+											strokeWidth="1.6" strokeLinejoin="round">
+											<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.7-5.2-2.7-5.2 2.7 1-5.7L3.6 9.7l5.8-.9z" />
+										</svg>
+									</button>
+								</div>
+							);
+						})}
 					</div>
 				</div>
 			</details>
@@ -554,6 +764,7 @@ function ContentTools({ textareaRef }) {
 							<button type="button" className="rp-btn" onClick={insertSpace} title="在光标处插入一个空临格（空列）">插入空格</button>
 							<button type="button" className="rp-btn" onClick={insertBlankPage} title={'按当前版式每页 ' + layoutInfo.rows + ' 行追加一整页空临格'}>插入空白页</button>
 							<button type="button" className="rp-btn" onClick={function () { if (fileRef.current) fileRef.current.click(); }}>导入 txt</button>
+							<button type="button" className="rp-btn" onClick={cleanContent} title="去除每行首尾空白、折叠多余空行、把汉字后的半角标点转为全角">清洗排版…</button>
 							<button type="button" className="rp-btn" onClick={onExport}>导出 txt</button>
 							{confirming ? (
 								<>
@@ -571,6 +782,24 @@ function ContentTools({ textareaRef }) {
 							style={{ display: 'none' }}
 							onChange={onFileChange}
 						/>
+					</div>
+					{/* 按字数截取（A3）：从长文开头保留 N 字 */}
+					<div className="rp-field">
+						<label htmlFor="truncateCount">按字数截取</label>
+						<div className="rp-actions">
+							<input
+								id="truncateCount"
+								type="number"
+								min="1"
+								max={config.Content.length}
+								value={truncateValue}
+								placeholder={'当前 ' + config.Content.length + ' 字'}
+								style={{ width: '110px' }}
+								onChange={function (e) { setTruncateValue(e.target.value); }}
+							/>
+							<button type="button" className="rp-btn" onClick={doTruncate} title="保留内容前 N 字并覆盖编辑框">截取</button>
+						</div>
+						<p className="rp-hint-note">从长文开头截取 N 字生成字帖；直接覆盖内容（可撤销），建议先「导出 txt」备份。</p>
 					</div>
 				</div>
 			</details>
@@ -597,24 +826,31 @@ function ContentTools({ textareaRef }) {
 /* 预设（S1）：版式偏好快照，只承载版式偏好，加载时保留当前内容与标题。
  * 桌面端存 Go workspace 服务（应用数据目录）；浏览器保持 localStorage。 */
 function PresetGroup() {
+	const online = useBackendOnline();
 	const dispatch = useDispatch();
 	const config = useSelector(function (s) { return s.config; });
-	const desktop = isDesktopEnv();
+	/* 内核在线（含 web 探测命中）：预设存 Go workspace 服务；本地模式保持 localStorage */
 	const [presetName, setPresetName] = useState('');
 	const [presets, setPresets] = useState({});
 	const [hint, setHint] = useState('');
 	const [renamingName, setRenamingName] = useState(null);
 	const [renameValue, setRenameValue] = useState('');
+	/* P-a 预设导入浮层：null 关闭；{ text, parsed, error } 打开 */
+	const [presetImport, setPresetImport] = useState(null);
+	const presetIoRef = useRef(null);
+	const presetModalRef = useRef(null);
+	/* 焦点圈定（U1）：打开时聚焦文本域、Tab 循环、Esc 取消 */
+	useFocusTrap({ ref: presetModalRef, active: !!presetImport, onClose: closePresetImport, initialSelector: '#presetImportText' });
 
 	/* 初始列表：桌面从内核拉取；浏览器读 localStorage（与旧行为一致） */
 	useEffect(function () {
-		if (desktop) {
+		if (online) {
 			sharedClient().listPresets().then(setPresets).catch(function () { /* 内核不可达时保持空列表 */ });
 			return undefined;
 		}
 		setPresets(loadPresets());
 		return undefined;
-	}, [desktop]);
+	}, [online]);
 
 	function refresh(list) {
 		setPresets(Object.assign({}, list || {}));
@@ -633,7 +869,7 @@ function PresetGroup() {
 			return;
 		}
 		var data = presetSnapshot();
-		if (desktop) {
+		if (online) {
 			sharedClient().savePreset(name, data)
 				.then(function () {
 					setPresetName('');
@@ -650,14 +886,14 @@ function PresetGroup() {
 	}
 
 	function onLoadPreset(name) {
-		var data = desktop ? presets[name] : loadPresets()[name];
+		var data = online ? presets[name] : loadPresets()[name];
 		if (!data) return;
 		dispatch(importConfig(Object.assign({ Content: config.Content, Title: config.Title }, data)));
 		dispatch(pushToast({ type: 'success', text: '已加载预设「' + name + '」。' }));
 	}
 
 	function onDeletePreset(name) {
-		if (desktop) {
+		if (online) {
 			sharedClient().deletePreset(name)
 				.then(function () {
 					dispatch(pushToast({ type: 'success', text: '已删除预设「' + name + '」。' }));
@@ -685,11 +921,11 @@ function PresetGroup() {
 		var next = renameValue.trim();
 		cancelRename();
 		if (!next || next === name) return;
-		if (desktop ? presets[next] : loadPresets()[next]) {
+		if (online ? presets[next] : loadPresets()[next]) {
 			setHint('已存在同名预设「' + next + '」。');
 			return;
 		}
-		if (desktop) {
+		if (online) {
 			sharedClient().renamePreset(name, next)
 				.then(function () {
 					dispatch(pushToast({ type: 'success', text: '已重命名预设「' + name + '」→「' + next + '」。' }));
@@ -701,6 +937,118 @@ function PresetGroup() {
 		}
 		setPresets(renamePreset(name, next));
 		dispatch(pushToast({ type: 'success', text: '已重命名预设「' + name + '」→「' + next + '」。' }));
+	}
+
+	/* ---- 预设导入导出（P-a）：链接 / JSON，编码复用 share.js ---- */
+
+	function currentPresets() {
+		return online ? presets : loadPresets();
+	}
+
+	function onCopyPresetLink() {
+		var all = currentPresets();
+		if (!Object.keys(all).length) {
+			dispatch(pushToast({ type: 'info', text: '还没有可分享的预设，先保存一个吧。' }));
+			return;
+		}
+		var res = encodePresetShare(all);
+		if (!res.ok) {
+			dispatch(pushToast({ type: 'error', text: '预设过多导致链接超长（>' + MAX_SHARE_URL_CHARS + ' 字符）；请改用「导出 JSON」。' }));
+			return;
+		}
+		copyText(res.url).then(function (ok) {
+			if (ok) dispatch(pushToast({ type: 'success', text: '预设链接已复制（含 ' + res.count + ' 个预设），发给朋友打开即可导入。' }));
+			else dispatch(pushToast({ type: 'error', text: '复制失败：请改用「导出 JSON」。' }));
+		});
+	}
+
+	function onExportPresetJson() {
+		var all = currentPresets();
+		if (!Object.keys(all).length) {
+			dispatch(pushToast({ type: 'info', text: '还没有可导出的预设，先保存一个吧。' }));
+			return;
+		}
+		var blob = new Blob([presetsToJson(all)], { type: 'application/json;charset=utf-8' });
+		var url = URL.createObjectURL(blob);
+		var a = document.createElement('a');
+		a.href = url;
+		a.download = '墨帖预设.json';
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+		dispatch(pushToast({ type: 'success', text: '已导出预设 JSON（' + Object.keys(all).length + ' 个）。' }));
+	}
+
+	function openPresetImport() {
+		setPresetImport({ text: '', parsed: null, error: '' });
+	}
+
+	function closePresetImport() {
+		setPresetImport(null);
+	}
+
+	/* 解析粘贴内容：先按链接（#p=）再按 JSON 文本，任一路径识别即用 */
+	function parsePresetImport(text) {
+		var link = decodePresetShare(text);
+		if (link) return link;
+		return parsePresetsJson(text);
+	}
+
+	function onPresetImportText(e) {
+		var text = e.target.value;
+		var has = !!text.trim();
+		var parsed = has ? parsePresetImport(text) : null;
+		setPresetImport({
+			text: text,
+			parsed: parsed,
+			error: has && !parsed ? '无法识别：请粘贴 #p= 开头的预设链接，或选择导出的预设 JSON 文件。' : ''
+		});
+	}
+
+	function onPresetImportFile(e) {
+		var file = e.target.files && e.target.files[0];
+		if (!file) return;
+		var reader = new FileReader();
+		reader.onload = function () {
+			var text = String(reader.result || '');
+			var parsed = parsePresetImport(text);
+			setPresetImport({ text: text, parsed: parsed, error: parsed ? '' : '文件内容不是有效的预设分享数据。' });
+		};
+		reader.readAsText(file, 'utf-8');
+		e.target.value = '';
+	}
+
+	function importResultText(merged) {
+		if (!merged.added) return '没有新预设可导入（' + merged.skipped + ' 个同名已跳过）。';
+		return '已导入 ' + merged.added + ' 个预设' + (merged.skipped ? '（跳过同名 ' + merged.skipped + ' 个）' : '') + '。';
+	}
+
+	function commitPresetImport() {
+		var box = presetImport;
+		if (!box || !box.parsed) return;
+		var base = currentPresets();
+		var result = mergePresets(base, box.parsed.presets);
+		var merged = result.merged;
+		var fresh = Object.keys(box.parsed.presets).filter(function (k) {
+			return !Object.prototype.hasOwnProperty.call(base, k);
+		});
+		if (online) {
+			Promise.all(fresh.map(function (name) { return sharedClient().savePreset(name, merged[name]); }))
+				.then(function () {
+					dispatch(pushToast({ type: 'success', text: importResultText(result) }));
+					closePresetImport();
+					return sharedClient().listPresets();
+				})
+				.then(refresh)
+				.catch(function () { setHint('导入失败：内核不可达。'); });
+			return;
+		}
+		var all = loadPresets();
+		fresh.forEach(function (name) { all = savePreset(name, merged[name]); });
+		setPresets(all);
+		dispatch(pushToast({ type: 'success', text: importResultText(result) }));
+		closePresetImport();
 	}
 
 	var names = Object.keys(presets);
@@ -719,6 +1067,12 @@ function PresetGroup() {
 					/>
 					<button type="button" className="rp-btn" onClick={onSavePreset}>保存</button>
 				</div>
+				<div className="rp-actions">
+					<button type="button" className="rp-btn" onClick={onCopyPresetLink}>复制分享链接</button>
+					<button type="button" className="rp-btn" onClick={onExportPresetJson}>导出 JSON</button>
+					<button type="button" className="rp-btn" onClick={openPresetImport}>导入…</button>
+				</div>
+				<p className="rp-hint-note">分享只含版式字段（不含内容与字体）；同名预设在导入时跳过。</p>
 				{names.length > 0 && (
 					<ul className="rp-presets">
 						{names.map(function (name) {
@@ -750,6 +1104,43 @@ function PresetGroup() {
 					</ul>
 				)}
 				{hint && <p className="rp-hint-note">{hint}</p>}
+				{presetImport && (function () {
+					var base = currentPresets();
+					var list = presetImport.parsed ? Object.keys(presetImport.parsed.presets) : [];
+					var same = list.filter(function (k) { return Object.prototype.hasOwnProperty.call(base, k); }).length;
+					return (
+						<div className="rp-presetio-scrim" onClick={closePresetImport}>
+							<div ref={presetModalRef} className="rp-presetio-modal" role="dialog" aria-modal="true" aria-label="导入预设" onClick={function (e) { e.stopPropagation(); }}>
+								<h3 className="rp-shareqr-title">导入预设</h3>
+								<textarea
+									id="presetImportText"
+									className="rp-input rp-presetio-text"
+									rows={4}
+									value={presetImport.text}
+									placeholder="粘贴 #p= 开头的预设链接，或 JSON 文本"
+									onChange={onPresetImportText}
+								/>
+								<div className="rp-actions">
+									<button type="button" className="rp-btn" onClick={function () { if (presetIoRef.current) presetIoRef.current.click(); }}>选择 JSON 文件…</button>
+								</div>
+								<input ref={presetIoRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={onPresetImportFile} />
+								{presetImport.error && <p className="rp-hint-note rp-docs-warn">{presetImport.error}</p>}
+								{presetImport.parsed && (
+									<p className="rp-hint-note">
+										识别到 {list.length} 个预设：{list.join('、')}
+										<br />
+										{same ? '其中 ' + same + ' 个与现有同名，将跳过。' : '均为新预设，将直接加入。'}
+									</p>
+								)}
+								<div className="rp-actions">
+									<button type="button" className="rp-btn rp-btn-primary" disabled={!presetImport.parsed} onClick={commitPresetImport}>导入</button>
+									<button type="button" className="rp-btn" onClick={closePresetImport}>取消</button>
+								</div>
+							</div>
+						</div>
+					);
+				})()}
+
 			</div>
 		</Group>
 	);
@@ -844,8 +1235,162 @@ function SettingsIO() {
 	);
 }
 
+/* 数据备份（E3）：仅本地模式（mock）——桌面端数据在 Go 侧磁盘，不经此入口。
+ * 导出 = 当前 zitie.mock.v1 快照打带校验头 JSON；导入 = 解析 → 预览数量 →
+ * 合并写回（同名跳过、已有内容不覆盖）→ 刷新生效（MockTransport 初始化源即该快照）。 */
+function BackupGroup() {
+	const online = useBackendOnline();
+	const dispatch = useDispatch();
+	const fileRef = useRef(null);
+	const [pending, setPending] = useState(null); /* { payload, summary } 待确认导入 */
+	const [busy, setBusy] = useState(false);
+
+	useEffect(function () { if (online) setPending(null); }, [online]);
+
+	function onExport() {
+		var text = encodeBackup();
+		if (text == null) {
+			dispatch(pushToast({ type: 'error', text: '没有可导出的本地数据。' }));
+			return;
+		}
+		var name = '墨帖备份-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.json';
+		var blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+		var url = URL.createObjectURL(blob);
+		var a = document.createElement('a');
+		a.href = url;
+		a.download = name;
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+		dispatch(pushToast({ type: 'success', text: '已导出完整备份（设置 / 预设 / 字帖库 / 最近内容与文件）。' }));
+	}
+
+	function onImportFile(e) {
+		var file = e.target.files && e.target.files[0];
+		e.target.value = '';
+		if (!file || busy) return;
+		var reader = new FileReader();
+		reader.onload = function () {
+			var parsed = parseBackup(String(reader.result || ''));
+			if (!parsed.ok) {
+				dispatch(pushToast({ type: 'error', text: '导入失败：' + parsed.error }));
+				return;
+			}
+			setPending({ payload: parsed.payload, summary: parsed.summary });
+		};
+		reader.readAsText(file, 'utf-8');
+	}
+
+	function confirmImport() {
+		if (!pending || busy) return;
+		setBusy(true);
+		var result = mergeBackup(pending.payload);
+		if (result === null) {
+			setBusy(false);
+			setPending(null);
+			dispatch(pushToast({ type: 'error', text: '导入失败：浏览器存储不可用。' }));
+			return;
+		}
+		setPending(null);
+		dispatch(pushToast({
+			type: 'success',
+			text: '导入完成：新增 ' + result.addedDocuments + ' 字帖 / ' + result.addedFiles + ' 文件 / ' + result.addedPresets + ' 预设，页面将刷新。'
+		}));
+		setTimeout(function () { window.location.reload(); }, 900);
+	}
+
+	if (online) return null; /* 桌面端：数据在本机磁盘，无需浏览器侧备份 */
+	return (
+		<Group title="数据备份">
+			<div className="rp-field">
+				<label>导出 / 导入</label>
+				<div className="rp-actions">
+					<button type="button" className="rp-btn" onClick={onExport}>导出完整备份</button>
+					{pending ? (
+						<button type="button" className="rp-btn rp-btn-primary" disabled={busy} onClick={confirmImport}>
+							{busy ? <><span className="rp-spinner" aria-hidden="true" />导入中…</> : '确认导入'}
+						</button>
+					) : (
+						<button type="button" className="rp-btn" disabled={busy} onClick={function () { if (fileRef.current) fileRef.current.click(); }}>导入完整备份</button>
+					)}
+					{pending && !busy && (
+						<button type="button" className="rp-btn" onClick={function () { setPending(null); }}>取消</button>
+					)}
+				</div>
+				<input ref={fileRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={onImportFile} />
+				{pending ? (
+					<p className="rp-hint-note">
+						将并入：<strong>{pending.summary.documents}</strong> 个字帖、<strong>{pending.summary.files}</strong> 个内容文件、<strong>{pending.summary.presets}</strong> 个预设；同名跳过、已有内容不覆盖。导入后页面刷新生效。
+					</p>
+				) : (
+					<p className="rp-hint-note">备份包含设置、预设、字帖库与最近文件内容（仅本地模式数据）；导入为合并，完成后刷新页面。</p>
+				)}
+			</div>
+		</Group>
+	);
+}
+
+/* 接入设置：手动固定本机内核端口。写入 zitie.backend.port——启动探测顺序中
+ * 「URL ?port=」之后、「默认端口」之前会优先尝试该端口（见 ipc/client.ts detectBackend）。
+ * 与顶栏「本地模式」标注、能力门同源；保存后需刷新页面生效。 */
+function AccessGroup() {
+	const online = useBackendOnline();
+	const [port, setPort] = useState(function () { return String(readBackendPort() || ''); });
+	const [msg, setMsg] = useState(null);
+
+	function parse(text) {
+		var p = Math.floor(Number(String(text || '').trim()));
+		return Number.isFinite(p) && p > 0 && p < 65536 ? p : null;
+	}
+	function save() {
+		var p = parse(port);
+		if (p === null) { setMsg({ type: 'error', text: '请输入 1–65535 之间的端口号。' }); return; }
+		if (!writeBackendPort(p)) { setMsg({ type: 'error', text: '保存失败：浏览器存储不可用。' }); return; }
+		setMsg({ type: 'ok', text: '已固定端口 ' + p + '，刷新页面后生效。' });
+	}
+	function clear() {
+		clearBackendPort();
+		setPort('');
+		setMsg({ type: 'ok', text: '已清除固定端口，恢复默认探测顺序。' });
+	}
+	function test() {
+		var p = parse(port);
+		if (p === null) { setMsg({ type: 'error', text: '请先输入 1–65535 之间的端口号。' }); return; }
+		setMsg({ type: 'info', text: '正在检测端口 ' + p + '…' });
+		probeBackendPort(p).then(function (ok) {
+			setMsg(ok
+				? { type: 'ok', text: '端口 ' + p + ' 可达墨帖内核。' }
+				: { type: 'error', text: '端口 ' + p + ' 未检测到墨帖内核。' });
+		});
+	}
+
+	return (
+		<Group title="接入">
+			<div className="rp-field">
+				<label>本机内核端口</label>
+				<div className="rp-actions">
+					<input
+						type="number" min="1" max="65535" className="rp-input" style={{ width: 96 }}
+						placeholder={'默认 ' + DEFAULT_BACKEND_PORT}
+						value={port}
+						onChange={function (e) { setPort(e.target.value); }}
+					/>
+					<button type="button" className="rp-btn" onClick={test}>测试连接</button>
+					<button type="button" className="rp-btn" onClick={save}>保存</button>
+					<button type="button" className="rp-btn" onClick={clear}>清除</button>
+				</div>
+				<p className="rp-hint-note">当前接入：{online ? '已连接桌面内核。' : '本地模式（未检测到内核，数据仅存本机浏览器）。'}</p>
+				<p className="rp-hint-note">手动固定的端口在启动探测中优先于默认端口（URL 的 ?port= 仍最优先）；改动了端口请刷新页面生效。</p>
+				{msg ? <p className="rp-hint-note">{msg.text}</p> : null}
+			</div>
+		</Group>
+	);
+}
+
 /* 检查更新（仅桌面端）：查 GitHub Releases latest，只提示 + 给下载地址，不自动安装。 */
 function UpdateGroup() {
+	const online = useBackendOnline();
 	const [busy, setBusy] = useState(false);
 	const [info, setInfo] = useState(null);
 
@@ -858,7 +1403,8 @@ function UpdateGroup() {
 			.finally(function () { setBusy(false); });
 	}
 
-	if (!isDesktopEnv()) return null;
+	/* 检查更新依赖 Go 内核（update 服务），本地模式不展示该分组 */
+	if (!online) return null;
 
 	return (
 		<Group title="更新">
@@ -866,7 +1412,7 @@ function UpdateGroup() {
 				<label>版本</label>
 				<div className="rp-actions">
 					<button type="button" className="rp-btn" disabled={busy} onClick={onCheck}>
-						{busy ? '正在检查…' : '检查更新'}
+						{busy ? <><span className="rp-spinner" aria-hidden="true" />正在检查…</> : '检查更新'}
 					</button>
 				</div>
 				{info && !info.error && (info.newer ? (
@@ -886,7 +1432,8 @@ function UpdateGroup() {
 	);
 }
 
-export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
+export function Panel({ pdfBusy, pdfProgress, onExportPdf, pngBusy, pngProgress, onExportPng, onPrint, printRangeValue, onPrintRangeChange }) {
+	const online = useBackendOnline();
 	const config = useSelector(function (s) { return s.config; });
 	const dispatch = useDispatch();
 	const schema = ConfigSchema;
@@ -900,6 +1447,12 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 	const triggerRef = useRef(null);
 	/* 导出 Kindle 版（桌面端）进行中态，避免重复点击 */
 	const [kindleBusy, setKindleBusy] = useState(false);
+	/* 分享二维码浮层（D4）：{ url, chars, matrix }；null=关闭 */
+	const [shareQr, setShareQr] = useState(null);
+	const shareQrCanvasRef = useRef(null);
+	const shareQrRef = useRef(null);
+	/* 焦点圈定（U1）：浮层内 Tab 循环 + Esc 关闭 + 焦点返还触发按钮 */
+	useFocusTrap({ ref: shareQrRef, active: !!shareQr, onClose: function () { setShareQr(null); }, initialSelector: '.rp-shareqr-close' });
 
 	/* 空态引导：预览区「查看示例」→ 切到内容页并聚焦输入框 */
 	useEffect(function () {
@@ -1008,6 +1561,49 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 		return function () { document.removeEventListener('keydown', onKeyDown); };
 	}, [dispatch]);
 
+	/* 分享链接（A1 / D4）：内容 + 当前模式版式编码进 URL hash，复制发给朋友打开即可练。
+	 * 超长内容降级提示走「更多 → 导出 JSON」。 */
+	function onShareLink() {
+		var res = encodeShare(config);
+		if (!res.ok) {
+			dispatch(pushToast({
+				type: 'info',
+				text: '内容约 ' + res.chars + ' 字，链接超长（>' + MAX_SHARE_URL_CHARS + ' 字符）；请用「更多 → 导出 JSON」分享。'
+			}));
+			return;
+		}
+		copyText(res.url).then(function (ok) {
+			if (ok) dispatch(pushToast({ type: 'success', text: '字帖链接已复制（约 ' + res.chars + ' 字），发给朋友打开即可练。' }));
+			else dispatch(pushToast({ type: 'error', text: '复制失败：请手动复制浏览器地址栏中的链接。' }));
+		});
+	}
+
+	/* 分享二维码（D4）：与链接同一载荷；链接超 QR 容量时提示走 JSON */
+	function onShareQr() {
+		var res = encodeShare(config);
+		if (!res.ok) {
+			dispatch(pushToast({
+				type: 'info',
+				text: '内容约 ' + res.chars + ' 字，链接超长（>' + MAX_SHARE_URL_CHARS + ' 字符）；二维码无法容纳，请用「更多 → 导出 JSON」分享。'
+			}));
+			return;
+		}
+		setShareQr({ url: res.url, chars: res.chars, matrix: buildQrMatrix(res.url) });
+	}
+
+	/* 绘制二维码（canvas 就绪后）；Esc 关闭 */
+	useEffect(function () {
+		if (!shareQr) return;
+		drawQrCanvas(shareQrCanvasRef.current, shareQr.matrix);
+	}, [shareQr]);
+
+	useEffect(function () {
+		if (!shareQr) return;
+		var onKeyDown = function (e) { if (e.key === 'Escape') setShareQr(null); };
+		document.addEventListener('keydown', onKeyDown);
+		return function () { document.removeEventListener('keydown', onKeyDown); };
+	}, []);
+
 	/* 导出 Kindle 版（桌面端）：内核把内置 lite 单文件复制到 export/，返回绝对路径 */
 	function onExportKindle() {
 		if (kindleBusy) return;
@@ -1048,6 +1644,7 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 		grid: { title: '字格', sub: ZG_TYPES.length + ' 种样式 · ' + ZG_COLORS.length + ' 种颜色' },
 		text: { title: '文字', sub: '字体 · 颜色 · 辅助' },
 		output: { title: '输出', sub: '姓名 / 日期 / 页码 · 导出 / 打印' },
+		docs: { title: '字帖', sub: '本机内容源 · 点击打开' },
 		more: { title: '更多', sub: '关于 · 设置导入导出' }
 	}[page];
 
@@ -1367,6 +1964,24 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 									})}
 								</div>
 							</div>
+							<div className="rp-field">
+								<label htmlFor="showPageTitle">页首标题</label>
+								<div className="rp-tpl">
+									<button
+										type="button"
+										id="showPageTitle"
+										className={config.ShowPageTitle ? 'is-active' : ''}
+										aria-pressed={config.ShowPageTitle}
+										onClick={function () { field('ShowPageTitle', !config.ShowPageTitle); }}
+									>
+										{config.ShowPageTitle ? '每页显示' : '仅首页'}
+									</button>
+								</div>
+								{config.ShowPageTitle && (
+									<SchemaRange schemaKey="PageTitleScale" aria-valuetext={'格高 ' + config.PageTitleScale + '%'} display={config.PageTitleScale + '%'} />
+								)}
+								<p className="rp-hint-note">在每页首行之上显示内容标题（未填标题时不显示）。</p>
+							</div>
 						</Group>
 					<PageGroup />
 					<PresetGroup />
@@ -1629,7 +2244,11 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 									);
 								})}
 							</div>
-							<p className="rp-hint-note">自动：与范字同色并减半透明度。</p>
+							<p className="rp-hint-note">自动 = 与范字同色；浓度由下方「描红浓度」决定。</p>
+						</div>
+						<div className="rp-field">
+							<label htmlFor="traceRatio">描红浓度</label>
+							<SchemaRange schemaKey="TraceRatio" aria-valuetext={config.TraceRatio + '%'} display={config.TraceRatio + '%'} />
 						</div>
 						<div className="rp-field">
 							<label htmlFor="inkAlpha">深浅</label>
@@ -1652,6 +2271,11 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 										);
 									})}
 								</div>
+							</div>
+							<div className="rp-field">
+								<label htmlFor="inkWidth">笔画粗细</label>
+								<SchemaRange schemaKey="InkWidth" aria-valuetext={'字号的 ' + (config.InkWidth / 10) + '%'} display={config.InkWidth === 0 ? '默认' : ('+' + config.InkWidth / 10 + '%')} />
+								<p className="rp-hint-note">字形描边加粗，取字号的 0–8%（与「字体粗细」叠加）。</p>
 							</div>
 							<div className="rp-field">
 								<label htmlFor="charScale">字体大小</label>
@@ -1720,14 +2344,50 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 						<MetaGroup />
 						{/* 输出动作（P2-7）：导出 / 打印从顶栏移入「输出」页，名实相符 */}
 						<Group title="输出动作">
+							{/* 打印缩放（C-f）：页宽超出常见 A4 可打印宽度时自动等比缩小，避免右侧裁切 */}
+							<div className="rp-field">
+								<label htmlFor="printScale">打印缩放</label>
+								<SchemaRange schemaKey="PrintScale" aria-valuetext={config.PrintScale === 0 ? '自动' : (config.PrintScale + '%')} display={config.PrintScale === 0 ? '自动' : (config.PrintScale + '%')} />
+								<p className="rp-hint-note">自动按约 200mm 可打印宽度估算；用更大纸张或需原尺寸请设为 100%。</p>
+							</div>
+							{/* 打印范围（D3）：仅打印选中页；打印时未选中页临时隐藏 */}
+							<div className="rp-field">
+								<label htmlFor="printRange">打印范围</label>
+								<input
+									id="printRange"
+									className="rp-input"
+									value={printRangeValue || ''}
+									placeholder="留空打印全部，如 2 或 1,3-5"
+									onChange={function (e) { if (onPrintRangeChange) onPrintRangeChange(e.target.value); }}
+								/>
+								<p className="rp-hint-note">仅打印选中页；留空打印全部。</p>
+							</div>
+							{/* PNG 导出分辨率（C-e）：仅影响 PNG，PDF 固定 1.5× */}
+							<div className="rp-field">
+								<label htmlFor="pngDpi">PNG 分辨率</label>
+								<SchemaRange schemaKey="PngDpi" aria-valuetext={config.PngDpi + ' dpi'} display={config.PngDpi + ' dpi'} />
+								<p className="rp-hint-note">96–384dpi；越高越清晰，文件体积与生成耗时同步上升。</p>
+							</div>
 							<div className="rp-actions">
-									<button type="button" className="rp-btn" disabled={pdfBusy || !isDesktopEnv()} onClick={onExportPdf}
-										title={isDesktopEnv() ? undefined : 'PDF 导出仅在桌面版可用（需连接桌面内核）'}>
-										{pdfBusy
-											? <><span className="rp-spinner" aria-hidden="true" />正在生成 PDF{pdfProgress && pdfProgress.total ? `… ${pdfProgress.done}/${pdfProgress.total}` : '…'}</>
-											: '导出 PDF'}
-									</button>
-								{isDesktopEnv() && (
+								<button type="button" className="rp-btn" onClick={onShareLink} title="把内容与当前版式编码进链接，复制发给朋友打开即可练">
+									分享链接
+								</button>
+								<button type="button" className="rp-btn" onClick={onShareQr} title="生成二维码，手机扫码即可打开该链接">
+									分享二维码
+								</button>
+								<button type="button" className="rp-btn" disabled={pdfBusy || !online} onClick={onExportPdf}
+									title={online ? undefined : 'PDF 导出需连接桌面内核（详见「本地模式」说明）'}>
+									{pdfBusy
+										? <><span className="rp-spinner" aria-hidden="true" />正在生成 PDF{pdfProgress && pdfProgress.total ? `… ${pdfProgress.done}/${pdfProgress.total}` : '…'}</>
+										: '导出 PDF'}
+								</button>
+								<button type="button" className="rp-btn" disabled={pngBusy} onClick={onExportPng}
+										title="把每页导出为 PNG 图片，便于手机保存与群内分享">
+									{pngBusy
+										? <><span className="rp-spinner" aria-hidden="true" />正在生成 PNG{pngProgress && pngProgress.total ? `… ${pngProgress.done}/${pngProgress.total}` : '…'}</>
+										: '导出 PNG'}
+								</button>
+								{online && (
 									<button type="button" className="rp-btn" disabled={kindleBusy} onClick={onExportKindle} title="复制内置单文件版到「导出」目录，Kindle 浏览器可直开">
 										{kindleBusy ? <><span className="rp-spinner" aria-hidden="true" />正在导出…</> : '导出 Kindle 版'}
 									</button>
@@ -1738,10 +2398,14 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 					</div>
 				)}
 
+				{page === 'docs' && <DocsPage />}
+
 				{page === 'more' && (
 					<div className="rp-panel-page">
-						{/* 设置导入导出提到「更多」首屏（P2-7） */}
+						{/* 设置导入导出提到「更多」首屏（P2-7）；接入设置与顶栏标注同源；备份仅本地模式 */}
 						<SettingsIO />
+						<AccessGroup />
+						<BackupGroup />
 						<p className="rp-about-text">墨帖是一套纯前端字帖工具：内容、版式、字格与字体均在本地处理，可导出 PDF 或直接打印。</p>
 						<p className="rp-version">墨帖 v{__ZITIE_VERSION__}</p>
 						<UpdateGroup />
@@ -1749,6 +2413,20 @@ export function Panel({ pdfBusy, pdfProgress, onExportPdf, onPrint }) {
 					</div>
 				)}
 			</aside>
+			{/* 分享二维码浮层（D4） */}
+			{shareQr && (
+				<div className="rp-shareqr-scrim" onClick={function () { setShareQr(null); }}>
+					<div ref={shareQrRef} className="rp-shareqr-modal" role="dialog" aria-modal="true" aria-label="分享二维码" onClick={function (e) { e.stopPropagation(); }}>
+						<h3 className="rp-shareqr-title">扫码打开字帖</h3>
+						<canvas ref={shareQrCanvasRef} className="rp-shareqr-canvas" width="260" height="260" />
+						{!shareQr.matrix.ok && (
+							<p className="rp-shareqr-note rp-shareqr-warn">链接过长，二维码无法容纳；请使用「分享链接」或「更多 → 导出 JSON」。</p>
+						)}
+						{shareQr.matrix.ok && <p className="rp-shareqr-note">约 {shareQr.chars} 字 · 链接长 {shareQr.url.length} 字符</p>}
+						<button type="button" className="rp-btn rp-btn-primary rp-shareqr-close" onClick={function () { setShareQr(null); }}>关闭</button>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

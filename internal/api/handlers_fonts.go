@@ -92,6 +92,28 @@ func (s *Server) handleFontsRemove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 }
 
+/* handleFontsTags 设置个人字体标签（分类用）。 */
+func (s *Server) handleFontsTags(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Fonts == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "fonts service unavailable"})
+		return
+	}
+	var req struct {
+		ID   string   `json:"id"`
+		Tags []string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.ID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if err := s.deps.Fonts.UpdateTags(req.ID, req.Tags); err != nil {
+		status := fontErrStatus(err)
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
 func (s *Server) handleFontsRename(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Fonts == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "fonts service unavailable"})

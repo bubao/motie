@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { ContentModel, INK_RGB, getPinyin, FONT_WEIGHT_NUM, getStrokeMedians, getControlBackground, getStrokeBackground, STROKE_NAMES, CONTROL_PATTERN_NAMES } from './core/index.js';
+import { ContentModel, INK_RGB, getPinyin, getLinePinyins, FONT_WEIGHT_NUM, getStrokeMedians, getControlBackground, getStrokeBackground, STROKE_NAMES, CONTROL_PATTERN_NAMES, parsePageRange, applyPrintRange, clearPrintRange, traceAlphaOf, paperBgOf, paperTextureUri, printScaleOf } from './core/index.js';
 import { useSheetLayout } from './hooks/useSheetLayout.js';
 import { useZgBackground } from './hooks/useZgBackground.js';
-import { replaceHan } from './store.js';
+import { pushToast, replaceHan, setContent } from './store.js';
 import { BigPreview } from './BigPreview.jsx';
 
 /* 元信息日期（T2.2）：YYYY-MM-DD，屏幕 / 打印 / PDF 一致 */
@@ -44,9 +44,42 @@ function clampZoom(v) { return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v)); }
  * 颜色 / 行距 / 格子大小内联，避免依赖 CSS 变量在 React 外的副作用。
  * 交互：单击字格进入单字编辑（T1.10），双击 / Space 打开放大预览（T1.9）。
  */
-export function Preview({ pinyinReady }) {
+export function Preview({ pinyinReady, printRange }) {
 	const config = useSelector(function (s) { return s.config; });
 	const dispatch = useDispatch();
+
+	/* 页级删页（Z3）：按本页 src 区间从 Content 删除可渲染字符（入撤销栈） */
+	function onDeletePage(pageIndex) {
+		var page = layout.pages[pageIndex];
+		if (!page || page.srcFrom == null) {
+			dispatch(pushToast({ type: 'info', text: '本页没有可删除的内容。' }));
+			return;
+		}
+		var next = ContentModel.removeCharsRange(config.Content, page.srcFrom, page.srcTo, config.Mode);
+		if (next === config.Content) {
+			dispatch(pushToast({ type: 'info', text: '本页没有可删除的内容。' }));
+			return;
+		}
+		dispatch(setContent(next));
+		dispatch(pushToast({ type: 'success', text: '已删除第 ' + (pageIndex + 1) + ' 页内容（可撤销）。' }));
+	}
+
+	/* 页级合并（Z3）：两页之间为显式空行分页时删除该空行；自动分页无法直接合并 */
+	function onMergePage(pageIndex) {
+		var cur = layout.pages[pageIndex];
+		var nxt = layout.pages[pageIndex + 1];
+		if (!cur || !nxt || cur.srcTo == null || nxt.srcFrom == null) {
+			dispatch(pushToast({ type: 'info', text: '已经是最后一页，没有下一页可合并。' }));
+			return;
+		}
+		var next = ContentModel.mergeAtBoundary(config.Content, cur.srcTo, nxt.srcFrom, config.Mode);
+		if (next == null) {
+			dispatch(pushToast({ type: 'info', text: '两页之间是自动分页，不能直接合并；可改用「删去本页」调整内容后重排。' }));
+			return;
+		}
+		dispatch(setContent(next));
+		dispatch(pushToast({ type: 'success', text: '已合并第 ' + (pageIndex + 1) + ' / ' + (pageIndex + 2) + ' 页（可撤销）。' }));
+	}
 	const [bigChar, setBigChar] = useState('');
 	const [editing, setEditing] = useState(null); // { key, index, char }
 	const [draft, setDraft] = useState('');
@@ -57,6 +90,7 @@ export function Preview({ pinyinReady }) {
 	const editingRef = useRef(null);
 	const mainRef = useRef(null);
 	const printingRef = useRef(false); /* 打印展开期间：observer 回调不得缩减 rendered（P1-6） */
+	const printRangeRef = useRef({ all: true, set: null }); /* 打印范围解析结果（D3），beforeprint 时读取 */
 	const scaleRef = useRef(1);
 	/* 按需渲染（T2.4）：仅渲染进入视口的页，屏外页保留占位；打印前全量展开 */
 	const [rendered, setRendered] = useState({ 0: true });
@@ -72,6 +106,15 @@ export function Preview({ pinyinReady }) {
 	/* 版式真源：依赖全量收敛在 hook 内（见 hooks/useSheetLayout.js），不再手写依赖列表 */
 	const layout = useSheetLayout(config);
 	const pageCount = layout.pages.length;
+
+	/* 打印范围（D3）：解析面板输入；非法文本仅提示，不改动其他状态 */
+	useEffect(function () {
+		var parsed = parsePageRange(printRange, pageCount);
+		printRangeRef.current = parsed;
+		if (parsed.invalid) {
+			dispatch(pushToast({ type: 'error', text: '打印范围无效：请用「2」或「1,3-5」形式，且不超过总页数 ' + pageCount + '。' }));
+		}
+	}, [printRange, pageCount, dispatch]);
 
 	/* 按需渲染（T2.4）：观察 .rp-page 进入视口（提前 120%），仅标记渲染；
 	   占位与完整页复用同一 DOM 节点（key 稳定），observer 持续有效。 */
@@ -167,9 +210,12 @@ export function Preview({ pinyinReady }) {
 		var onBefore = function () {
 			printingRef.current = true;
 			flushSync(function () { setRendered(allRendered(pageCount)); });
+			/* 仅打印选中页（D3）：未选中页临时挂 no-print（@media print 已隐藏该 class） */
+			applyPrintRange(printRangeRef.current.all ? null : printRangeRef.current.set);
 		};
 		var onAfter = function () {
 			printingRef.current = false;
+			clearPrintRange();
 			flushSync(function () { setRendered(visiblePages()); });
 		};
 		window.addEventListener('beforeprint', onBefore);
@@ -253,11 +299,16 @@ export function Preview({ pinyinReady }) {
 		el.textContent = '@page{size:' + config.Page.width + 'mm ' + config.Page.height + 'mm;margin:' + m.top + 'mm ' + m.right + 'mm ' + m.bottom + 'mm ' + m.left + 'mm;}';
 	}, [config.Page.width, config.Page.height, config.Margin.top, config.Margin.right, config.Margin.bottom, config.Margin.left]);
 
+	/* 打印缩放（C-f）：仅打印生效，避免页宽超出纸张可打印区导致右侧裁切 */
+	const printZoom = printScaleOf(config);
+	/* 纸张底色 / 纹理（C-d）：屏幕 / 打印 / PDF 同源（CSS 变量注入 .rp-page-sheet） */
+	const paperBg = paperBgOf(config);
+	const paperTex = paperTextureUri(config);
 	const rgb = INK_RGB[config.InkColor] || INK_RGB.cinnabar;
 	const modelColor = 'rgba(' + rgb + ', ' + config.InkAlpha + ')';
-	/* 描红颜色（A3）：auto = 同主色 × 0.5 透明度；指定色 = 该色 × 主色不透明度 */
+	/* 描红颜色（A3 + Z1=C-a）：auto = 同主色，指定色 = 该色；浓度统一由 TraceRatio 决定 */
 	const traceRGB = config.TraceColor === 'auto' ? rgb : (INK_RGB[config.TraceColor] || rgb);
-	const traceAlpha = config.TraceColor === 'auto' ? config.InkAlpha * 0.5 : config.InkAlpha;
+	const traceAlpha = traceAlphaOf(config);
 	const traceColor = 'rgba(' + traceRGB + ', ' + traceAlpha + ')';
 	/* 字格背景：由完整配置派生（样式 / 颜色 / 线型 / 粗细 / 透明度），屏幕预览与字帖（打印 / PDF）一致 */
 	const zg = useZgBackground(config);
@@ -517,7 +568,7 @@ export function Preview({ pinyinReady }) {
 
 	return (
 		<main className="rp-preview">
-			<div className="rp-preview-scroll" ref={mainRef}>
+			<div id="rp-main" className="rp-preview-scroll" ref={mainRef} tabIndex={-1} aria-label="字帖预览区">
 				<div
 					id="printContent"
 					className={config.Cols > 0 ? 'is-fixed-cols' : ''}
@@ -536,6 +587,13 @@ export function Preview({ pinyinReady }) {
 						'--trace-alpha': String(traceAlpha),
 						/* 字体粗细（A1）：normal 400 / bold 700，屏幕 / 打印 / PDF 同源 */
 						'--char-weight': String(FONT_WEIGHT_NUM[config.FontWeight] || 400),
+						/* 笔画加粗（C-c）：字形描边宽度 = 字号 × InkWidth/1000（em），.hz-line 消费，PDF 同源 */
+						'--char-stroke': ((Number(config.InkWidth) || 0) / 1000) + 'em',
+						/* 纸张底色 / 纹理（C-d）：.rp-page-sheet 消费，打印保留（print-color-adjust） */
+						'--paper-bg': paperBg,
+						'--paper-texture': paperTex ? 'url(' + paperTex + ')' : 'none',
+						/* 打印缩放（C-f）：@media print 中 #printContent 以 transform 消费 */
+						'--print-zoom': String(printZoom),
 						/* 字占格比例（A2）：默认 0.725，屏幕 / 打印 / PDF 同源 */
 						'--char-scale': String(config.CharScale),
 						/* 字体在格内的水平 / 垂直偏移（格倍数）：.hz-line 用 translate 消费，打印 / PDF 同源 */
@@ -571,7 +629,9 @@ export function Preview({ pinyinReady }) {
 								>
 									{rendered[pageIndex] ? (
 									<div className="page-block">
-									{page.title && <p className="sheet-title">{page.title}</p>}
+									{page.title && (
+										<p className="sheet-title" style={{ fontSize: mmPx(layout.gridMm * (layout.pageTitleScale != null ? layout.pageTitleScale : 42) / 100) }}>{page.title}</p>
+									)}
 									{/* 行距 = 行盒高 × 配置倍率（田字格 1.0×格，拼音格 1.4×格）；
 									    行区垂直对齐按配置（居中 / 靠顶 / 靠底），行距不变 */}
 									<div className={'rows' + (config.VerticalAlign === 'top' ? ' is-top' : config.VerticalAlign === 'bottom' ? ' is-bottom' : '')}>
@@ -608,7 +668,7 @@ export function Preview({ pinyinReady }) {
 																				data-char={ch}
 																				role="button"
 																				tabIndex={0}
-																				aria-label={'编辑 ' + ch + '，双击放大查看'}
+																				aria-label={'编辑 ' + ch + '，双击或按空格放大查看'}
 																				onKeyDown={function (e) { onCellKeyDown(e, { key: key, char: ch }); }}
 																				style={{
 																					left: 'calc(var(--grid-size) * (1 + var(--cell-gap, 0)) * ' + layout.letterStep + ' * ' + ci + ')',
@@ -640,6 +700,8 @@ export function Preview({ pinyinReady }) {
 													</div>
 												);
 											}
+											/* 行级语境取音：多音字按词定音（与 PDF / 打印同源） */
+											var linePy = pinyinReady ? getLinePinyins(line.cells) : null;
 											return (
 												<div className="row" key={r}>
 													{line.cells.map(function (cell, c) {
@@ -654,13 +716,13 @@ export function Preview({ pinyinReady }) {
 															: null;
 														var lineLabel = cell.role === 'blank' ? undefined
 															: (isControl ? '控笔图案 ' + (CONTROL_PATTERN_NAMES[cell.char] || cell.char)
-																: isStroke ? '笔画' + (STROKE_NAMES[cell.char] || '') : '编辑 ' + cell.char + '，双击放大查看');
+																: isStroke ? '笔画' + (STROKE_NAMES[cell.char] || '') : '编辑 ' + cell.char + '，双击或按空格放大查看');
 															return (
 																<span className={'cell' + (isPyGrid ? ' has-pinyin' : '') + (isPyBar ? ' has-pinyin-bar' : '')} key={c}>
 																	{showPy && (isPyBar ? (
-																		<span className="cell-pinyin-bar">{pinyinReady ? getPinyin(cell.char) : ''}</span>
+																		<span className="cell-pinyin-bar">{linePy ? linePy[c] || '' : ''}</span>
 																	) : (
-																		<span className="cell-pinyin">{pinyinReady ? getPinyin(cell.char) : ''}</span>
+																		<span className="cell-pinyin">{linePy ? linePy[c] || '' : ''}</span>
 																	))}
 																	<span
 																		className={'hz-line is-' + cell.role}
@@ -714,12 +776,29 @@ export function Preview({ pinyinReady }) {
 										</div>
 									</div>
 								) : null}
+									{/* 落款行（B4）：每页右下角小字，文本留空不渲染；屏幕 / 打印同源（PDF 见 core/pdf.js） */}
+									{config.ShowSignature && config.SignatureText ? (
+										<p className="sheet-signature" style={{ fontSize: mmPx(layout.gridMm * 0.36) }}>{config.SignatureText}</p>
+									) : null}
 									<p className="rp-page-no">
 										{config.ShowMeta && (
 											<span className="rp-meta">姓名：{config.Name || '＿＿＿＿'}　日期：{dateStamp(new Date())}</span>
 										)}
-										{config.ShowPageNo ? '第 ' + (pageIndex + 1) + ' / ' + layout.pages.length + ' 页' : ''}
+									{config.ShowPageNo ? '第 ' + (pageIndex + 1) + ' / ' + layout.pages.length + ' 页' : ''}
+										{config.ShowScore ? '　　得分：＿＿＿＿' : ''}
 									</p>
+									{/* 页级微调（Z3）：删除本页内容 / 与下页合并（不打印、可撤销） */}
+									<div className="rp-page-tools no-print">
+										<button type="button" className="rp-link" onClick={function () { onDeletePage(pageIndex); }}>删去本页</button>
+										<button
+											type="button"
+											className="rp-link"
+											disabled={pageIndex >= layout.pages.length - 1}
+											onClick={function () { onMergePage(pageIndex); }}
+										>
+											与下页合并
+										</button>
+									</div>
 								</div>
 							</div>
 						</div>
@@ -738,7 +817,7 @@ export function Preview({ pinyinReady }) {
 				<span className="rp-zoom-sep" aria-hidden="true"></span>
 				<button type="button" className={'rp-zoom-fit' + (zoomMode === 'fit' ? ' is-active' : '')} onClick={resetZoom} aria-pressed={zoomMode === 'fit'} title="按窗口大小自动适应">适应</button>
 			</div>
-			<BigPreview char={bigChar} strokeAnim={config.StrokeAnim} zg={zg} isPy={isPyGrid} bar={isPyBar} dx={config.CharOffsetX || 0} dy={config.CharOffsetY || 0} ratio={layout.ratio} weight={config.FontWeight} scale={config.CharScale} onClose={function () { setBigChar(''); }} />
+			<BigPreview char={bigChar} strokeAnim={config.StrokeAnim} zg={zg} isPy={isPyGrid} bar={isPyBar} dx={config.CharOffsetX || 0} dy={config.CharOffsetY || 0} ratio={layout.ratio} weight={config.FontWeight} scale={config.CharScale} inkWidth={config.InkWidth} onClose={function () { setBigChar(''); }} />
 		</main>
 	);
 }

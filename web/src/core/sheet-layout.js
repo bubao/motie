@@ -71,6 +71,9 @@ const compute = (options) => {
 	/* 控笔练习行数（P1-3：仅 Mode='control' 且 >0 生效；0 = 跟随内容行 / 满页） */
 	const controlRows = options.controlRows != null ? options.controlRows : cfg.ControlRows;
 	const title = options.title != null ? options.title : cfg.Title;
+	/* 每页页首标题（Z2=C-b）：默认仅首页；开启后每页显示，字号为格高百分比 */
+	const showPageTitle = options.showPageTitle != null ? options.showPageTitle : cfg.ShowPageTitle;
+	const pageTitleScale = options.pageTitleScale != null ? options.pageTitleScale : cfg.PageTitleScale;
 
 	const zgType = options.zgType != null ? options.zgType : cfg.ZgType;
 	const gridRatio = options.gridRatio != null ? options.gridRatio : cfg.GridRatio;
@@ -84,8 +87,10 @@ const compute = (options) => {
 	const useRepeat = template === 'repeat' && (repeatUnit === 'char' || repeatUnit === 'word');
 	const base = ContentModel.pageLayout(gridPx(gridSize), page, margin, useRepeat ? repeatCount + 1 : colsOverride, rowGap, zgType, gridRatio, useRepeat, charGap);
 	const titleH = title ? base.gridMm * 0.9 : 0;
-	let rowsFirst = base.rows;
-	if (titleH > 0 && base.rows > 1) rowsFirst = base.rows - 1;
+	/* 每页都带标题时，所有页少一行；否则维持「仅首页少一行」的旧行为 */
+	const eachTitle = !!title && !!showPageTitle;
+	const rowsFirst = titleH > 0 && base.rows > 1 ? base.rows - 1 : base.rows;
+	const rowsRest = eachTitle && base.rows > 1 ? base.rows - 1 : base.rows;
 	/* 行距为精确值（见 pageLayout），各页行距周期一致；有标题时第一页只少一行，
 	 * 行区在可用高内垂直居中（渲染侧 .rows 统一处理），无需按页重算行距。 */
 	const pitchFirstMm = base.pitchMm;
@@ -140,7 +145,7 @@ const compute = (options) => {
 		});
 		/* 整页铺满：页内不足目标行数时补空临格行（有字显示字，无字也画格）。
 		 * 补行不计入 rowNo，保持 decay 模板按内容行号递减的语义。 */
-		const target = pageIndex === 0 ? rowsFirst : base.rows;
+		const target = pageIndex === 0 ? rowsFirst : rowsRest;
 		while (rendered.length < target) {
 			if (mode === 'english') {
 				rendered.push({ eng: true, words: [], cells: [] });
@@ -150,7 +155,28 @@ const compute = (options) => {
 				rendered.push({ eng: false, words: [], cells: blankLine });
 			}
 		}
-		return { title: pageIndex === 0 ? title : '', lines: rendered };
+		/* 本页覆盖的可渲染字符序号区间（Z3：页级删页 / 合并反推源内容；无内容则为 null） */
+		let srcFrom = -1;
+		let srcTo = -1;
+		rendered.forEach(function (line) {
+			(line.cells || []).forEach(function (c) {
+				if (c.src == null) return;
+				if (srcFrom < 0 || c.src < srcFrom) srcFrom = c.src;
+				if (c.src > srcTo) srcTo = c.src;
+			});
+			(line.words || []).forEach(function (w) {
+				if (w.src == null) return;
+				const last = w.src + w.chars.length - 1;
+				if (srcFrom < 0 || w.src < srcFrom) srcFrom = w.src;
+				if (last > srcTo) srcTo = last;
+			});
+		});
+		return {
+			title: eachTitle || pageIndex === 0 ? title : '',
+			lines: rendered,
+			srcFrom: srcFrom < 0 ? null : srcFrom,
+			srcTo: srcFrom < 0 ? null : srcTo
+		};
 	});
 
 	return {
@@ -169,6 +195,8 @@ const compute = (options) => {
 		cols: base.cols,
 		rows: base.rows,
 		rowsFirst,
+		showPageTitle: eachTitle,
+		pageTitleScale: pageTitleScale,
 		fixedCols: colsOverride > 0,
 		repeat: useRepeat,
 		titleH,

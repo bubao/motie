@@ -106,8 +106,9 @@
 		Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
 		Margin: { top: 5, right: 16, bottom: 5, left: 16 }, /* 页边距（mm），与 @page / sheet-layout 一致 */
 		Name: '',            /* 姓名（元信息，可打印 / 导出 PDF） */
-		ShowMeta: false,     /* 每页底部显示「姓名 / 日期」 */
-		ShowPageNo: true,    /* 屏幕 / 打印 / PDF 显示页码 */
+	ShowMeta: false,     /* 每页底部显示「姓名 / 日期」 */
+	ShowPageNo: true,    /* 屏幕 / 打印 / PDF 显示页码 */
+	ShowScore: false,    /* 每页底部显示「得分：＿＿＿＿」评分栏（A3） */
 		fontURL: '',
 		FontSource: { type: 'default' },           /* 字体来源：default 系统默认 / url 网络地址 / local 本地字体（id） */
 		PreviewText: '天地玄黄，宇宙洪荒',           /* 字体管理器的预览字样 */
@@ -247,6 +248,7 @@
 	Name:          { type: 'text', max: 12, group: 'meta' },
 	ShowMeta:      { type: 'bool', group: 'meta' },
 	ShowPageNo:    { type: 'bool', group: 'meta' },
+	ShowScore:     { type: 'bool', group: 'meta' },
 	fontURL:       { type: 'text', max: 2000, group: 'font', sanitize: 'fontURL' },
 	FontSource:    { type: 'object', shape: 'fontSource', group: 'font' },
 		PreviewText:   { type: 'text', max: 40, group: 'font' },
@@ -404,8 +406,9 @@
 		Page: Z.DEFAULTS.Page,
 		Margin: Z.DEFAULTS.Margin,
 		Name: Z.DEFAULTS.Name,
-		ShowMeta: Z.DEFAULTS.ShowMeta,
-		ShowPageNo: Z.DEFAULTS.ShowPageNo,
+	ShowMeta: Z.DEFAULTS.ShowMeta,
+	ShowPageNo: Z.DEFAULTS.ShowPageNo,
+	ShowScore: Z.DEFAULTS.ShowScore,
 		fontURL: Z.DEFAULTS.fontURL,
 		FontSource: Z.DEFAULTS.FontSource,
 		PreviewText: Z.DEFAULTS.PreviewText,

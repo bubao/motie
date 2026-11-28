@@ -9,8 +9,8 @@ import {
 	pickModeSnapshot, defaultModeState, pickPrefs,
 	loadConfig, saveConfig
 } from './core/index.js';
-import toastReducer, { pushToast, dismissToast } from './toastSlice.mjs';
-import { sharedClient, isDesktopEnv } from './ipc/client.ts';
+import toastReducer, { pushToast, dismissToast, setBackendMode } from './toastSlice.mjs';
+import { sharedClient } from './ipc/client.ts';
 
 /* 桌面端偏好（Theme / 模板 / 字格 / 页边距 / 字体 / 资源模式等）以 Go 配置服务为 SSOT：
  * 本地变更防抖 PUT，SSE config.changed 经 applyRemotePrefs 回填（不回推，防环）；
@@ -139,7 +139,15 @@ export const {
 	setField, setContent, setFontSource, replaceHan, applyFields, importConfig, resetConfig, switchMode,
 	undo: undoAction, redo: redoAction, resetHistory
 } = configSlice.actions;
-export { pushToast, dismissToast };
+export { pushToast, dismissToast, setBackendMode };
+
+/**
+ * 接入模式选择器（U6）：UI / 能力门 / 配置回推都以 ui.backend 为唯一真源。
+ * boot 时由 initSharedClient 结果写入（http / mock）；'init' 视为未接入内核。
+ */
+export function selectBackendOnline(s) {
+	return !!(s && s.ui && s.ui.backend === 'http');
+}
 
 /* 命令式入口（保留原签名：返回 boolean 供 Panel 判断提示）。 */
 export function undoContent() {
@@ -178,7 +186,8 @@ function flushNow() {
 	saveTimer = null;
 	const config = store.getState().config;
 	saveConfig(config);
-	if (isDesktopEnv()) {
+	/* 已连 Go 内核才回推（web 经反代打开同样适用）；本地模式只落 localStorage */
+	if (selectBackendOnline(store.getState())) {
 		sharedClient().setConfig(pickPrefs(config)).catch(function () { /* 内核暂不可达时忽略，下次变更重试 */ });
 	}
 }
@@ -199,13 +208,13 @@ store.subscribe(function () {
 	if (applyingRemote) return; /* 远端导入：本地无需再落盘 / 回推 */
 	prevConfig = config;
 	if (saveTimer) clearTimeout(saveTimer);
-	saveTimer = setTimeout(function () {
+		saveTimer = setTimeout(function () {
 		saveTimer = null;
-		saveConfig(config);
-		if (isDesktopEnv()) {
-			sharedClient().setConfig(pickPrefs(config)).catch(function () { /* 内核暂不可达时忽略，下次变更重试 */ });
-		}
-	}, 150);
+			saveConfig(config);
+			if (selectBackendOnline(store.getState())) {
+				sharedClient().setConfig(pickPrefs(config)).catch(function () { /* 内核暂不可达时忽略，下次变更重试 */ });
+			}
+		}, 150);
 });
 
 /* 退出前把防抖窗口内的变更落盘，缩短丢同步窗口（内核 PUT 尽力而为，localStorage 必达） */

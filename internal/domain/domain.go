@@ -1,5 +1,5 @@
 // Package domain 定义桌面版的领域契约：DTO（typegen 输入）与 SSE 事件常量。
-// JSON tag 与前端 zitie.config 键名保持一致（ZgType / FontURL / FontSource ...），
+// JSON tag 与前端 zitie.config 键名保持一致（ZgType / fontURL / FontSource ...），
 // 使 Go 内核与 web/src 共享同一套配置词汇，ipc 客户端可无映射透传。
 package domain
 
@@ -56,7 +56,7 @@ type Config struct {
 	InkColor     string     `json:"InkColor"`
 	InkAlpha     float64    `json:"InkAlpha"`
 	FontWeight   string     `json:"FontWeight"`
-	FontURL      string     `json:"FontURL"`
+	FontURL      string     `json:"fontURL"` /* 小写：与 web/src/core/config.js 的 ConfigSchema / PREFS_KEYS / localStorage 主链一致 */
 	FontSource   FontSource `json:"FontSource"`
 	ResourceMode string     `json:"ResourceMode"`
 	Page         PageSize   `json:"Page"`
@@ -93,13 +93,14 @@ type WorkspaceFile struct {
  * 系统字体：只有 Name/Source，不落盘。 */
 
 type FontEntry struct {
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name"`
-	Source    string `json:"source"` // system / user
-	Path      string `json:"path,omitempty"`
-	Size      int64  `json:"size,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
-	Enabled   bool   `json:"enabled"`
+	ID        string   `json:"id,omitempty"`
+	Name      string   `json:"name"`
+	Source    string   `json:"source"` // system / user
+	Path      string   `json:"path,omitempty"`
+	Size      int64    `json:"size,omitempty"`
+	Tags      []string `json:"tags,omitempty"` // 个人字体分类（仅用户字体）
+	CreatedAt string   `json:"created_at,omitempty"`
+	Enabled   bool     `json:"enabled"`
 }
 
 /* ---------- 字体库总览（GET /api/fonts） ---------- */
@@ -107,6 +108,19 @@ type FontEntry struct {
 type FontLibrary struct {
 	System []FontEntry `json:"system"`
 	User   []FontEntry `json:"user"`
+}
+
+/* ---------- 字帖索引条目（SQLite documents 表一行；内容仍存 workspace/*.md|txt） ---------- */
+
+type DocumentEntry struct {
+	ID        int64  `json:"id"`
+	Path      string `json:"path"` // workspace 内相对路径
+	Title     string `json:"title"`
+	Chars     int    `json:"chars"`
+	Favorite  bool   `json:"favorite"`
+	Archived  bool   `json:"archived,omitempty"`
+	CreatedAt string `json:"created_at"` // RFC3339
+	UpdatedAt string `json:"updated_at"` // RFC3339
 }
 
 /* ---------- 字体文件大小上限（与前端 FontManager MAX_FONT_SIZE 一致） ---------- */

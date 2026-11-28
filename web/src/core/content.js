@@ -342,6 +342,9 @@ const paginate = (model, cols, rows, rowsFirst, mode, pattern, controlRows, blan
 	}
 	const isEnglish = mode === 'english';
 	const isControl = mode === 'control';
+	/* 可渲染字符的全局序号（与 replaceCharAt 口径一致；空格 / 标点不计数），
+	 * 供页级删页 / 合并反推源内容区间（Z3）。 */
+	let srcNo = 0;
 	const fallbackPat = pattern || DEFAULTS.ControlPattern;
 	const controlRow = (key) => {
 		const row = [];
@@ -379,7 +382,8 @@ const paginate = (model, cols, rows, rowsFirst, mode, pattern, controlRows, blan
 					line = { words: [], cells: [] };
 					used = 0;
 				}
-				line.words.push({ chars: word.chars, marks: word.marks, offset: used });
+				line.words.push({ chars: word.chars, marks: word.marks, offset: used, src: srcNo });
+				srcNo += word.chars.length;
 				used += w + ENGLISH_WORD_GAP;
 			});
 		if (line) lines.push(line);
@@ -426,7 +430,7 @@ const paginate = (model, cols, rows, rowsFirst, mode, pattern, controlRows, blan
 				slice.push('');
 				sliceMarks.push('');
 			}
-			lines.push(slice.map((char, k) => ({ char, mark: sliceMarks[k] || '' })));
+			lines.push(slice.map((char, k) => ({ char, mark: sliceMarks[k] || '', src: isRenderable(char, mode) ? srcNo++ : undefined })));
 		}
 	});
 
@@ -477,6 +481,82 @@ const paginate = (model, cols, rows, rowsFirst, mode, pattern, controlRows, blan
 /* 替换 / 删除第 index 个可渲染字符（标点不参与编号，与渲染格子顺序一致）：
  * newChar 为空串时删除；非单个可渲染字符输入忽略（返回原文）。
  * 供「点击格子编辑单字」写回 Content。mode 默认 hanzi（兼容旧调用）。 */
+/* 粘贴长文一键清洗（Z4）：逐行 trim、折叠连续空行、汉字后的半角标点转全角。
+ * 不改动字间空格（「空格即空临格」是既有语义）。返回 { text, blankLines, puncts }。 */
+const FULLWIDTH_PUNCT = [[',', '，'], ['.', '。'], [';', '；'], [':', '：'], ['!', '！'], ['?', '？']];
+
+const escapeRegExp = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const cleanImportedText = (text, mode) => {
+	var lines = String(text == null ? '' : text)
+		.split(/\r\n|\r|\n/)
+		.map(function (l) { return l.replace(/^[ \t]+|[ \t]+$/g, ''); });
+	/* 折叠连续空行（保留单一分页符语义），并去掉首尾空行 */
+	var folded = [];
+	var blanks = 0;
+	lines.forEach(function (l) {
+		if (!l) {
+			blanks++;
+			if (blanks > 1) return;
+			folded.push('');
+			return;
+		}
+		blanks = 0;
+		folded.push(l);
+	});
+	while (folded.length && !folded[0]) folded.shift();
+	while (folded.length && !folded[folded.length - 1]) folded.pop();
+	var removedBlanks = lines.filter(function (l) { return !l; }).length - folded.filter(function (l) { return !l; }).length;
+	var out = folded.join('\n');
+	var puncts = 0;
+	if (mode !== 'english' && mode !== 'control') {
+		FULLWIDTH_PUNCT.forEach(function (pair) {
+			var re = new RegExp('([\\u4e00-\\u9fff])' + escapeRegExp(pair[0]), 'g');
+			out = out.replace(re, function (_, ch) { puncts++; return ch + pair[1]; });
+		});
+	}
+	return { text: out, blankLines: removedBlanks, puncts: puncts };
+};
+
+/* 删除第 from..to 个可渲染字符（含两端，序号同 replaceCharAt）；
+ * 随后折叠连续空行，避免删页留下多余分页符（Z3 页级删页）。 */
+const removeCharsRange = (text, from, to, mode) => {
+	var parts = splitChars(String(text == null ? '' : text));
+	var idx = 0;
+	var start = -1;
+	var end = -1;
+	for (var i = 0; i < parts.length; i++) {
+		if (!isRenderable(parts[i], mode)) continue;
+		if (idx === from) start = i;
+		if (idx === to) { end = i; break; }
+		idx++;
+	}
+	if (start < 0 || end < 0) return String(text);
+	parts.splice(start, end - start + 1);
+	/* 折叠连续空行并去掉前导分页符（文首空行无视觉意义，避免删页留下空白页） */
+	return parts.join('').replace(/^([ \t]*\n){2,}/, '').replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').replace(/(?:[ \t]*\n){2,}$/, '');
+};
+
+/* 合并两页边界（Z3）：仅当第 prevTo 与第 nextFrom 个可渲染字符之间在文本中存在
+ * 显式空行时成立——删除该空行使两段连排；自动分页（无空行）返回 null。 */
+const mergeAtBoundary = (text, prevTo, nextFrom, mode) => {
+	var parts = splitChars(String(text == null ? '' : text));
+	var idx = 0;
+	var start = -1;
+	var end = -1;
+	for (var i = 0; i < parts.length; i++) {
+		if (!isRenderable(parts[i], mode)) continue;
+		if (idx === prevTo) start = i;
+		if (idx === nextFrom) { end = i; break; }
+		idx++;
+	}
+	if (start < 0 || end < 0 || end <= start) return null;
+	var between = parts.slice(start + 1, end).join('');
+	if (!/\n[ \t]*\n/.test(between)) return null;
+	parts.splice(start + 1, end - start - 1, between.replace(/\n[ \t]*\n/, '\n'));
+	return parts.join('');
+};
+
 const replaceCharAt = (text, index, newChar, mode) => {
 	const m = mode || 'hanzi';
 	const parts = splitChars(String(text == null ? '' : text));
@@ -591,6 +671,15 @@ export const Layout = {
 	}
 };
 
+/* 是否「有可输出的内容」（U3 空态统一判定，导出 / 打印共用同一口径）：
+ * 控笔（C1）的图案由配置生成，不依赖 Content；其余模式以正文trim 后非空为准。
+ * 与 pdf.js renderPages 的前置校验保持同源，避免界面提示与实际渲染不一致。 */
+export const hasExportableContent = (config) => {
+	const cfg = config || {};
+	if (cfg.Mode === 'control') return true;
+	return String(cfg.Content == null ? '' : cfg.Content).trim().length > 0;
+};
+
 export const ContentModel = {
 	parse,
 	paginate,
@@ -599,6 +688,9 @@ export const ContentModel = {
 	estimatePages,
 	replaceHanAt,
 	replaceCharAt,
+	removeCharsRange,
+	mergeAtBoundary,
+	cleanImportedText,
 	isRenderable,
 	isHan,
 	hanStats,

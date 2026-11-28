@@ -12,21 +12,35 @@ export const FONTS_KEY = 'zitie.fonts';     /* 已导入本地字体的元数据
 export const LEGACY_STORAGE_KEY = 'zitie-lite.config'; /* 精简版旧配置键，读取时迁移一次 */
 /* 「示例」按钮填充的文本（完整版与练字版共用） */
 export const SAMPLE_TEXT = '天地玄黄 宇宙洪荒 日月盈昃 辰宿列张 寒来暑往 秋收冬藏';
-/* 示例库（Panel 下拉选择；标点按 T0.8 规则不占格） */
+/* 示例库（Panel 分类 / 搜索 / 收藏；标点按 T0.8 规则不占格）。
+ * cat 仅用于分组筛选，与 mode 解耦；lite 副本不含 cat，lite-parity 只比对 name/text。 */
+export const SAMPLE_FAVS_KEY = 'zitie.sample-favs'; /* 收藏的示例名（本地界面偏好） */
+export function readSampleFavs() {
+	try {
+		var raw = localStorage.getItem(SAMPLE_FAVS_KEY);
+		var arr = raw ? JSON.parse(raw) : [];
+		return Array.isArray(arr) ? arr.filter(function (x) { return typeof x === 'string'; }) : [];
+	} catch (e) { return []; }
+}
+export function writeSampleFavs(list) {
+	try { localStorage.setItem(SAMPLE_FAVS_KEY, JSON.stringify((list || []).slice(0, 50))); } catch (e) { /* 存储不可用：仅内存态 */ }
+}
 export const SAMPLES = [
-	{ name: '千字文·节选', text: '天地玄黄 宇宙洪荒 日月盈昃 辰宿列张 寒来暑往 秋收冬藏', mode: 'hanzi' },
-	{ name: '三字经·节选', text: '人之初，性本善。性相近，习相远。苟不教，性乃迁。教之道，贵以专。', mode: 'hanzi' },
-	{ name: '静夜思', text: '床前明月光，疑是地上霜。举头望明月，低头思故乡。', mode: 'hanzi' },
-	{ name: '登鹳雀楼', text: '白日依山尽，黄河入海流。欲穷千里目，更上一层楼。', mode: 'hanzi' },
-	{ name: '春晓', text: '春眠不觉晓，处处闻啼鸟。夜来风雨声，花落知多少。', mode: 'hanzi' },
-	{ name: '论语·学而', text: '学而时习之，不亦说乎？有朋自远方来，不亦乐乎？', mode: 'hanzi' },
+	{ name: '千字文·节选', text: '天地玄黄 宇宙洪荒 日月盈昃 辰宿列张 寒来暑往 秋收冬藏', mode: 'hanzi', cat: '古诗' },
+	{ name: '三字经·节选', text: '人之初，性本善。性相近，习相远。苟不教，性乃迁。教之道，贵以专。', mode: 'hanzi', cat: '古诗' },
+	{ name: '静夜思', text: '床前明月光，疑是地上霜。举头望明月，低头思故乡。', mode: 'hanzi', cat: '古诗' },
+	{ name: '登鹳雀楼', text: '白日依山尽，黄河入海流。欲穷千里目，更上一层楼。', mode: 'hanzi', cat: '古诗' },
+	{ name: '春晓', text: '春眠不觉晓，处处闻啼鸟。夜来风雨声，花落知多少。', mode: 'hanzi', cat: '古诗' },
+	{ name: '论语·学而', text: '学而时习之，不亦说乎？有朋自远方来，不亦乐乎？', mode: 'hanzi', cat: '古诗' },
+	{ name: '二字词语', text: '天地 宇宙 星辰 日月 山河 风雨 云雾 霜雪', mode: 'hanzi', cat: '词语' },
+	{ name: '四字词语', text: '日新月异 国泰民安 春华秋实 山清水秀', mode: 'hanzi', cat: '词语' },
 	/* 笔画示例：按最长匹配切分（横竖撇捺点提折钩 / 永字八法），可继续追加 */
-	{ name: '基本笔画', text: '横竖撇捺点提折钩', mode: 'stroke' },
-	{ name: '永字八法', text: '点横竖钩提撇短撇捺', mode: 'stroke' },
+	{ name: '基本笔画', text: '横竖撇捺点提折钩', mode: 'stroke', cat: '笔画' },
+	{ name: '永字八法', text: '点横竖钩提撇短撇捺', mode: 'stroke', cat: '笔画' },
 	/* 字帖类型示例（B1 / B2 / B3）：切到对应模式后选用，数字推荐「数字本」字格 */
-	{ name: '数字 0-9', text: '0123456789', mode: 'number' },
-	{ name: '拼音字母（带调）', text: 'āáǎà ēéěè īíǐì ōóǒò ūúǔù ǖǘǚǜ', mode: 'pinyin' },
-	{ name: '英文字母', text: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz', mode: 'english' }
+	{ name: '数字 0-9', text: '0123456789', mode: 'number', cat: '数字' },
+	{ name: '拼音字母（带调）', text: 'āáǎà ēéěè īíǐì ōóǒò ūúǔù ǖǘǚǜ', mode: 'pinyin', cat: '拼音' },
+	{ name: '英文字母', text: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz', mode: 'english', cat: '英文' }
 ];
 export const MAX_CONTENT_LENGTH = 5000;
 export const MAX_TITLE_LENGTH = 40;
@@ -77,6 +91,16 @@ export const MIN_CHAR_SCALE = 0.5; /* 字占格比例区间（格倍数） */
 export const MAX_CHAR_SCALE = 1;
 export const MIN_CHAR_OFFSET = -0.25; /* 字体在格内的水平 / 垂直偏移区间（格倍数） */
 export const MAX_CHAR_OFFSET = 0.25;
+export const MIN_TRACE_RATIO = 10;   /* 描红浓度 %：相对范字墨色的比例（Z1=C-a） */
+export const MAX_TRACE_RATIO = 100;
+export const MIN_PNG_DPI = 96;    /* PNG 导出分辨率下限（96dpi = 屏幕 1×） */
+export const MAX_PNG_DPI = 384;
+/* 打印「自动适应」按常见 A4 可打印宽度估算（两侧各留约 5mm 非打印区；经验值） */
+export const SAFE_PRINT_WIDTH_MM = 200;
+export const MIN_PAGE_TITLE_SCALE = 50;  /* 每页标题字号：格高百分比（Z2=C-b） */
+export const MAX_PAGE_TITLE_SCALE = 150;
+export const MIN_INK_WIDTH = 0;    /* 笔画加粗：字形描边宽度 = 字号 × InkWidth/1000，0 = 默认（C-c） */
+export const MAX_INK_WIDTH = 80;
 
 /* 构建时可注入 window.ZITIE_BOOT.ResourceMode 指定默认资源来源（见 tools/build.js） */
 const boot = (typeof window !== 'undefined' && window.ZITIE_BOOT) || {};
@@ -101,11 +125,15 @@ export const DEFAULTS = {
 	BlankRowEvery: 0,     /* 练习密度：每 N 行内容插 1 整行空临格；0 = 关（english / control 不生效） */
 	BlankColEvery: 0,     /* 练习密度：每 N 列内容插 1 个空临格；0 = 关（english / control 不生效） */
 	VerticalAlign: 'center', /* 行区垂直对齐：center 居中 / top 靠顶 / bottom 靠底（行距不变） */
+	ShowPageTitle: false,  /* 每页顶部显示内容标题（默认仅首页，Z2=C-b） */
+	PageTitleScale: 42,   /* 页首标题字号 = 格高 × 42%（Z2=C-b） */
 	InkColor: 'cinnabar', /* 文字颜色：cinnabar / ink / ochre */
 	InkAlpha: 0.62,       /* 文字深浅 0.15–1 */
 	FontWeight: 'normal', /* 字体粗细：normal / bold */
+	InkWidth: 0,          /* 笔画加粗：字形描边宽度 = 字号 × InkWidth/1000，0 = 默认（C-c） */
 	CharScale: 0.725,     /* 字占格比例（屏幕 / 打印 / PDF 同源） */
 	TraceColor: 'auto',   /* 描红颜色：auto / cinnabar / ink / ochre */
+	TraceRatio: 50,       /* 描红浓度 %：traceAlpha = InkAlpha × TraceRatio/100（auto 与指定色统一，Z1=C-a） */
 	CharOffsetX: 0,       /* 字体在格内的水平偏移（格倍数，-0.25–0.25） */
 	CharOffsetY: 0,       /* 字体在格内的垂直偏移（格倍数） */
 	ZgType: '3',     /* 字格样式：1 田 / 2 米 / 3 米回 / 4 回 / 5 拼音 / 6 方格 / 7 数字 / 8 井字 / 9 英文四线（5–9 仅完整版） */
@@ -137,11 +165,19 @@ export const DEFAULTS = {
 	PinyinBar: false,    /* 格上拼音条（对齐 z2h「显示拼音」）：开启后格型自动切到 '10'（田字格 + 顶部窄条），关闭回退田字格 */
 	StrokeAnim: true,  /* 点击字格播放笔顺动画 */
 	StrokeOrder: false, /* 每格叠加静态笔顺序号（1..n，屏幕 / 打印 / PDF 同源） */
+	PaperColor: 'white', /* 纸张底色预设（C-d）：white / cream / rice，见 PAPER_COLORS */
+	PaperTint: '',       /* 纸张底色自定义 #rrggbb；空 = 跟随 PaperColor 预设（C-d） */
+	PaperTexture: 'none', /* 纸张纹理（C-d）：none / fiber / speckle，屏幕 / 打印 / PDF 同源 */
 	Page: { width: 210, height: 297 },                 /* 纸张尺寸（mm），与 sheet-layout 内置默认一致 */
 	Margin: { top: 5, right: 16, bottom: 5, left: 16 }, /* 页边距（mm），与 @page / sheet-layout 一致 */
 	Name: '',            /* 姓名（元信息，可打印 / 导出 PDF） */
 	ShowMeta: false,     /* 每页底部显示「姓名 / 日期」 */
 	ShowPageNo: true,    /* 屏幕 / 打印 / PDF 显示页码 */
+	ShowScore: false,    /* 每页底部显示「得分：＿＿＿＿」评分栏（A3） */
+	ShowSignature: false, /* 每页右下角显示落款行（B4）；文本为空按未开启处理 */
+	SignatureText: '',     /* 落款文本（≤24 字），如「甲辰年冬月书于灯下」 */
+	PngDpi: 144,         /* PNG 导出分辨率 dpi（96–384，默认 144 = 原 1.5×；仅 PNG，PDF 固定 1.5×，C-e） */
+	PrintScale: 0,       /* 打印缩放 %：0 = 自动（页宽超过安全宽度时等比缩小，避免右侧裁切，C-f）；1–100 手动 */
 	fontURL: '',
 	FontSource: { type: 'default' },           /* 字体来源：default 系统默认 / url 网络地址 / local 本地字体（id） */
 	PreviewText: '天地玄黄，宇宙洪荒',           /* 字体管理器的预览字样 */
@@ -175,6 +211,18 @@ export const INK_COLORS = {
 	ochre: '#A9713A'     /* 赭石 */
 };
 export const INK_COLOR_KEYS = ['cinnabar', 'ink', 'ochre'];
+
+/* 纸张底色（C-d）：PaperTint 自定义 hex 可覆盖预设 */
+export const PAPER_COLORS = {
+	white: '#FFFFFF', /* 纯白 */
+	cream: '#FAF3E3', /* 米黄（护眼） */
+	rice: '#F4EBDA'   /* 宣纸 */
+};
+export const PAPER_COLOR_KEYS = ['white', 'cream', 'rice'];
+export const PAPER_COLOR_NAMES = { white: '纯白', cream: '米黄', rice: '宣纸' };
+/* 纸张纹理（C-d）：none 无 / fiber 宣纸纤维 / speckle 洒金 */
+export const PAPER_TEXTURES = ['none', 'fiber', 'speckle'];
+export const PAPER_TEXTURE_NAMES = { none: '无', fiber: '宣纸纤维', speckle: '洒金' };
 
 /* 描红颜色：auto = 跟随范字色并降透明度；也可独立选色 */
 export const TRACE_COLOR_KEYS = ['auto', ...INK_COLOR_KEYS];
@@ -425,11 +473,15 @@ export const ConfigSchema = {
 	BlankRowEvery: { type: 'int', min: MIN_BLANK_EVERY, max: MAX_BLANK_EVERY, step: 1, group: 'layout', zeroLabel: '关闭' },
 	BlankColEvery: { type: 'int', min: MIN_BLANK_EVERY, max: MAX_BLANK_EVERY, step: 1, group: 'layout', zeroLabel: '关闭' },
 	VerticalAlign: { type: 'enum', values: VERTICAL_ALIGNS, group: 'layout' },
+	ShowPageTitle: { type: 'bool', group: 'layout' },
+	PageTitleScale: { type: 'int', min: MIN_PAGE_TITLE_SCALE, max: MAX_PAGE_TITLE_SCALE, step: 1, group: 'layout' },
 	InkColor:   { type: 'enum', values: INK_COLOR_KEYS, group: 'text' },
 	InkAlpha:   { type: 'percent', min: MIN_INK_ALPHA, max: MAX_INK_ALPHA, group: 'text' },
 	FontWeight: { type: 'enum', values: FONT_WEIGHTS, group: 'text' },
+	InkWidth:   { type: 'int', min: MIN_INK_WIDTH, max: MAX_INK_WIDTH, step: 5, group: 'text' },
 	CharScale:  { type: 'percent', min: MIN_CHAR_SCALE, max: MAX_CHAR_SCALE, group: 'text' },
 	TraceColor: { type: 'enum', values: TRACE_COLOR_KEYS, group: 'text' },
+	TraceRatio: { type: 'int', min: MIN_TRACE_RATIO, max: MAX_TRACE_RATIO, step: 5, group: 'text' },
 	CharOffsetX: { type: 'percent', min: MIN_CHAR_OFFSET, max: MAX_CHAR_OFFSET, group: 'text' },
 	CharOffsetY: { type: 'percent', min: MIN_CHAR_OFFSET, max: MAX_CHAR_OFFSET, group: 'text' },
 	ZgType:     { type: 'enum', values: ZG_TYPES, group: 'grid' },
@@ -456,11 +508,19 @@ export const ConfigSchema = {
 	ShowPinyin: { type: 'bool', group: 'text' },
 	StrokeAnim: { type: 'bool', group: 'layout' },
 	StrokeOrder: { type: 'bool', group: 'text' },
+	PaperColor:   { type: 'enum', values: PAPER_COLOR_KEYS, group: 'layout' },
+	PaperTint:     { type: 'hex', group: 'layout' }, /* 空 = 跟随 PaperColor 预设 */
+	PaperTexture:  { type: 'enum', values: PAPER_TEXTURES, group: 'layout' },
 	Page:          { type: 'object', group: 'layout' },
 	Margin:        { type: 'object', group: 'layout' },
 	Name:          { type: 'text', max: 12, group: 'meta' },
 	ShowMeta:      { type: 'bool', group: 'meta' },
 	ShowPageNo:    { type: 'bool', group: 'meta' },
+	ShowScore:     { type: 'bool', group: 'meta' },
+	ShowSignature: { type: 'bool', group: 'meta' }, /* 每页右下角落款行（B4）；文本见 SignatureText */
+	SignatureText: { type: 'text', max: 24, group: 'meta' },
+	PngDpi:        { type: 'int', min: MIN_PNG_DPI, max: MAX_PNG_DPI, step: 48, group: 'output' },
+	PrintScale:    { type: 'int', min: 0, max: 100, step: 5, group: 'output', zeroLabel: '自动' },
 	fontURL:       { type: 'text', max: 2000, group: 'font', sanitize: 'fontURL' },
 	FontSource:    { type: 'object', shape: 'fontSource', group: 'font' },
 	PreviewText:   { type: 'text', max: 40, group: 'font' },
@@ -645,6 +705,15 @@ export const saveConfig = (cfg) => {
 	} catch {
 		/* 写入失败（配额/禁用）时忽略 */
 	}
+};
+
+/* 描红墨色不透明度（Z1=C-a）：TraceRatio 相对范字浓度的比例（预览 / PDF 唯一口径）。 */
+export const traceAlphaOf = (cfg) => {
+	var alpha = Number(cfg && cfg.InkAlpha);
+	if (!(alpha > 0)) alpha = DEFAULTS.InkAlpha;
+	var ratio = Number(cfg && cfg.TraceRatio);
+	if (!(ratio > 0)) ratio = DEFAULTS.TraceRatio;
+	return alpha * (ratio / 100);
 };
 
 /* 白名单快照（导出 JSON / 保存预设共用） */

@@ -85,6 +85,7 @@ type ConfigService interface {
 // FileService 是工作区文件服务契约（组合根注入）。
 type FileService interface {
 	Read(path string) (domain.WorkspaceFile, error)
+	Delete(path string) error
 	Write(domain.WorkspaceFile) error
 	ListRecent() []string
 }
@@ -101,6 +102,7 @@ type FontsService interface {
 	Add(name, ext string, data []byte) (domain.FontEntry, error)
 	Remove(id string) error
 	Rename(id, name string) error
+	UpdateTags(id string, tags []string) error
 	File(id string) ([]byte, string, error)
 }
 
@@ -117,6 +119,18 @@ type KindleService interface {
 	Export() (string, error)
 }
 
+// LibraryService 是字帖索引库契约（组合根注入；允许 nil）。
+type LibraryService interface {
+	List() ([]domain.DocumentEntry, error)
+	Search(q string) ([]domain.DocumentEntry, error)
+	Get(id int64) (domain.DocumentEntry, error)
+	UpdateTitle(id int64, title string) error
+	SetFavorite(id int64, fav bool) error
+	Delete(id int64) error
+	ReindexFromRecents(paths []string) (int, error)
+	SyncContentStats(path string, chars int) error
+}
+
 // Updater 为更新检查契约（查 GitHub Releases latest）。
 type UpdaterInterface interface {
 	Latest(ctx context.Context) (UpdateInfo, error)
@@ -129,6 +143,7 @@ type Deps struct {
 	Fonts   FontsService
 	Presets PresetsService
 	Kindle  KindleService
+	Library LibraryService
 	Update  UpdaterInterface
 	WebFS   fs.FS // //go:embed dist
 	Bus     *Bus
@@ -178,12 +193,20 @@ func (s *Server) register() {
 	s.mux.HandleFunc("DELETE /api/fonts/{id}", s.handleFontsRemove)
 	s.mux.HandleFunc("GET /api/fonts/file/{id}", s.handleFontFile)
 	s.mux.HandleFunc("POST /api/fonts/rename", s.handleFontsRename)
+	s.mux.HandleFunc("POST /api/fonts/tags", s.handleFontsTags)
 
 	/* 版式预设。 */
 	s.mux.HandleFunc("GET /api/presets", s.handlePresetsList)
 	s.mux.HandleFunc("PUT /api/presets/{name}", s.handlePresetsPut)
 	s.mux.HandleFunc("DELETE /api/presets/{name}", s.handlePresetsDelete)
 	s.mux.HandleFunc("POST /api/presets/rename", s.handlePresetsRename)
+
+	/* 字帖索引库：列表/搜索 + 重命名/删除 + 从最近文件重建索引（M1/M3）。 */
+	s.mux.HandleFunc("GET /api/library", s.handleLibraryList)
+	s.mux.HandleFunc("POST /api/library/reindex", s.handleLibraryReindex)
+	s.mux.HandleFunc("POST /api/library/rename", s.handleLibraryRename)
+	s.mux.HandleFunc("POST /api/library/favorite", s.handleLibraryFavorite)
+	s.mux.HandleFunc("POST /api/library/delete", s.handleLibraryDelete)
 
 	/* PDF 导出：前端光栅化每页 JPEG，Go 组装成 PDF。 */
 	s.mux.HandleFunc("POST /api/pdf/build", s.handlePDFBuild)

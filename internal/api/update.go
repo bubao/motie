@@ -2,6 +2,8 @@
 //
 // 只做「提示有新版 + 打开发布页」，不自动下载/安装（macOS 分发给朋友场景，
 // 用户手动从 GitHub Release 取包；避免引入签名/公证之外的复杂链路）。
+// 2026-11-27 已评估「是否引入签名校验后下载」，结论维持只提示，
+// 依据见 doc/desktop-architecture.md §12。
 package api
 
 import (

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    motie Windows 原生壳（WinForms + WebView2）。
+    构建产物 motie-shell.exe 与 Go 内核同目录分发，内核按 <exeDir>/motie-shell.exe
+    查找并拉起（见 desktop_windows.go）。用法见 doc/native-shells.md。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>motie-shell</AssemblyName>
+    <RootNamespace>MotieShell</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <!-- 单文件发布时保留原生 WebView2 加载行为；关闭调试类型以减小体积 -->
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 浮动小版本：以目标机 NuGet 源可用的最新 1.0.x 为准（需联网还原） -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
+  </ItemGroup>
+
+</Project>

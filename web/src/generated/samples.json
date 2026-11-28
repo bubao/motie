@@ -6,7 +6,7 @@
     "InkColor": "cinnabar",
     "InkAlpha": 0.62,
     "FontWeight": "normal",
-    "FontURL": "",
+    "fontURL": "",
     "FontSource": {
       "type": "default"
     },
@@ -27,6 +27,16 @@
   "ConfigResponse": {
     "config": {}
   },
+  "DocumentEntry": {
+    "archived": false,
+    "chars": 0,
+    "created_at": "",
+    "favorite": false,
+    "id": {},
+    "path": "",
+    "title": "",
+    "updated_at": ""
+  },
   "FontEntry": {
     "created_at": "",
     "enabled": false,
@@ -34,7 +44,8 @@
     "name": "",
     "path": "",
     "size": {},
-    "source": ""
+    "source": "",
+    "tags": []
   },
   "FontLibrary": {
     "system": [],

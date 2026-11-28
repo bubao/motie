@@ -201,7 +201,7 @@ out
 /font/
 /lite/*
 !/lite/.gitkeep
-/vendor
+/web/vendor
 /dist/*
 !/dist/.gitkeep
 /dist-react

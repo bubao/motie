@@ -3,7 +3,12 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#F5F2EA">
 	<title>墨帖</title>
+	<!-- PWA（仅 http(s) 部署生效；file:// 直开与桌面壳不注册 SW，见 src/main.jsx） -->
+	<link rel="manifest" href="manifest.webmanifest">
+	<link rel="icon" href="icon.png">
+	<link rel="apple-touch-icon" href="icon.png">
 	<script>
 	/* 早期主题：避免深色模式首屏白闪（桌面端读 Go 注入的主题；浏览器读已存配置；默认跟随系统） */
 	(function () {

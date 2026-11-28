@@ -59,6 +59,30 @@ check('旧 js/ 核心目录已移除', !fs.existsSync(path.join(ROOT, 'js')));
 check('单文件不含旧核心全局挂载（window.Zitie=）', html.indexOf('window.Zitie=') === -1);
 check('单文件不含 js/ 核心脚本引用', html.indexOf('js/core.js') === -1 && html.indexOf('js/assets.js') === -1);
 
+/* 1.2 PWA 产物（需求编号 A5 / roadmap E1）：http(s) 部署可安装、可离线 */
+var pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+check('dist/icon.png 存在', exists(path.join(DIST, 'icon.png')));
+check('dist/manifest.webmanifest 存在', exists(path.join(DIST, 'manifest.webmanifest')));
+check('dist/sw.js 存在', exists(path.join(DIST, 'sw.js')));
+if (exists(path.join(DIST, 'manifest.webmanifest'))) {
+	var mf = {};
+	try { mf = JSON.parse(fs.readFileSync(path.join(DIST, 'manifest.webmanifest'), 'utf8')); } catch (e) { /* 落入下方断言失败 */ }
+	check('manifest 为合法 JSON', Object.keys(mf).length > 0);
+	check('manifest name=墨帖 且 display=standalone', mf.name === '墨帖' && mf.display === 'standalone');
+	check('manifest 图标指向 icon.png（1024x1024）',
+		!!mf.icons && mf.icons[0] && mf.icons[0].src === 'icon.png' && mf.icons[0].sizes === '1024x1024');
+}
+if (exists(path.join(DIST, 'sw.js'))) {
+	var sw = fs.readFileSync(path.join(DIST, 'sw.js'), 'utf8');
+	check('sw.js 缓存名含 package.json 版本', sw.indexOf('motie-v' + pkgVersion) !== -1, '期望 motie-v' + pkgVersion);
+	check('sw.js 预缓存 index.html 与 icon.png', sw.indexOf('index.html') !== -1 && sw.indexOf('icon.png') !== -1);
+	check('sw.js 导航分支（req.mode === "navigate"）', sw.indexOf('req.mode === "navigate"') !== -1);
+	check('sw.js 覆盖 pinyin-pro CDN（jsdelivr）', sw.indexOf('cdn.jsdelivr.net') !== -1);
+}
+/* 这里只做静态产物检查；「谁该注册 / 谁不该注册」的行为级断言在 test/sw.e2e.test.mjs */
+check('单文件头部引用 manifest 与图标',
+	html.indexOf('rel="manifest" href="manifest.webmanifest"') !== -1 && html.indexOf('rel="icon" href="icon.png"') !== -1);
+
 /* 2. Chrome headless 直开 file:// 产物，断言 React 已渲染 */
 var CANDIDATES = [
 	'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',

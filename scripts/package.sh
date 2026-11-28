@@ -5,7 +5,7 @@
 # 用法：
 #   scripts/package.sh <macos|windows|linux|all> [version] [arch]
 #
-#   version  省略时取 git 最新 tag（去掉 v 前缀），否则 0.1.0
+#   version  省略时读仓库根 VERSION 文件（再 git 最新 tag），否则 0.0.1
 #   arch     仅 macos：arm64 / amd64 / all（默认 all）
 #
 # 前置：前端产物 dist/ 与 lite/ 已由 `npm run build -- --vendor`（离线模式）生成（SKIP_FRONTEND=1 可跳过该检查）
@@ -22,7 +22,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 TARGET="${1:-all}"
-VERSION="${2:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")}"
+VERSION="${2:-$(cat VERSION 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || echo "0.0.1")}"
+VERSION="$(printf '%s' "$VERSION" | tr -d '\r\n ' | sed 's/^v//')"
 ARCH_ARG="${3:-all}"
 
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
@@ -31,9 +32,21 @@ ok()   { printf "${GREEN}[OK]${RESET} %s\n" "$*"; }
 warn() { printf "${YELLOW}[WARN]${RESET} %s\n" "$*"; }
 err()  { printf "${RED}[ERROR]${RESET} %s\n" "$*" >&2; exit 1; }
 
+# 单一真相源一致性：打包版本必须与前端 package.json 相同（对齐 hpic release 流程，失败即中止）
+if command -v node >/dev/null 2>&1; then
+  pkg_ver="$(node -e "process.stdout.write(require('$ROOT/package.json').version)" 2>/dev/null | tr -d '\r\n ' || true)"
+  [[ -n "$pkg_ver" && "$pkg_ver" == "$VERSION" ]] \
+    || err "VERSION($VERSION) 与 package.json version(${pkg_ver:-读取失败}) 不一致：请先统一版本号再打包"
+else
+  warn "未检测到 node，跳过 package.json 版本一致性校验"
+fi
+
 DIST_DIR="$ROOT/dist-desktop"
 mkdir -p "$DIST_DIR"
-LDFLAGS="-s -w -X main.Version=$VERSION"
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# main.* 与 internal/version.* 双包同注入，保证启动日志 / REST 元信息口径一致
+LDFLAGS="-s -w -X main.Version=$VERSION -X motie/internal/version.Version=$VERSION -X motie/internal/version.GitCommit=$GIT_COMMIT -X motie/internal/version.BuildDate=$BUILD_DATE"
 
 [[ -f dist/index.html ]] || err "缺少前端产物 dist/index.html，请先执行 npm run build -- --vendor"
 [[ -d dist/vendor ]] || err "缺少离线资源 dist/vendor/，请改用 npm run build -- --vendor 重新构建"

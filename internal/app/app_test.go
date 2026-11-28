@@ -137,6 +137,50 @@ func TestCloseIdempotentAndCancelsCtx(t *testing.T) {
 	}
 }
 
+/* 字帖索引库（M1）：LibraryAt 注入；启动时把现有 recents.json 并入库（幂等）。 */
+func TestLibraryWired(t *testing.T) {
+	home := t.TempDir()
+	dbPath := filepath.Join(home, "custom", "lib.db")
+	opts := Options{
+		WebFS:      fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>motie</html>")}},
+		ConfigHome: home,
+		LibraryAt:  dbPath,
+		Version:    "test",
+	}
+	a, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	/* 第一次启动：写一个工作区文件 → 进 recents.json */
+	if err := a.Files.Write(domain.WorkspaceFile{Path: "workspace/春晓.txt", Content: "春眠不觉晓"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	/* 第二次启动：recents 应被自动并入索引 */
+	a2, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a2.Close()
+	list, err := a2.Library.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Title != "春晓" || list[0].Path != "workspace/春晓.txt" {
+		t.Fatalf("list = %+v", list)
+	}
+
+	/* IPC 契约可达 */
+	rec := httptest.NewRecorder()
+	a2.Server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/library", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "春晓") {
+		t.Fatalf("GET /api/library → %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 /* 阶段 2：fonts / presets / kindle 装配与端到端行为。 */
 func TestStage2ServicesWired(t *testing.T) {
 	home := t.TempDir()

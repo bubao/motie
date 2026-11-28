@@ -1,16 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { getPinyin, loadPinyin, Stroke, loadHanziWriter, FONT_WEIGHT_NUM } from './core/index.js';
-
-/* overlay 内可聚焦元素（用于 Tab 焦点陷阱） */
-var FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+import { useFocusTrap } from './hooks/useFocusTrap.js';
 
 /**
  * 单字放大预览 / 笔顺动画。
  * 点击字格时打开：默认显示当前字体的静态字（与字帖格子一致），不自动播笔顺；
  * 点「播放笔顺」才加载 HanziWriter 播放（其字形为标准字形，无法套用自定义字体），失败降级为静态字。
- * 可访问性：打开时聚焦关闭按钮、Tab 在 overlay 内循环（焦点陷阱）、关闭后焦点返还触发字格。
+ * 可访问性：打开时聚焦关闭按钮、Tab 在浮层内循环、Esc 关闭、关闭后焦点返还触发字格
+ * （统一由 hooks/useFocusTrap.js 提供，U4）。
  */
-export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, ratio, weight, scale }) {
+export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, ratio, weight, scale, inkWidth }) {
 	var stageRef = useRef(null);
 	var overlayRef = useRef(null);
 	var closeRef = useRef(null);
@@ -23,6 +22,10 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, r
 	var reduceMotion = typeof window !== 'undefined' && window.matchMedia
 		? window.matchMedia('(prefers-reduced-motion: reduce)').matches
 		: false;
+
+	/* 焦点管理统一走 useFocusTrap（U4）：打开时聚焦关闭按钮、Tab 在浮层内循环、
+	 * Esc 关闭并返还焦点；与 Panel 的预设导入 / 分享二维码共用同一实现。 */
+	useFocusTrap({ ref: overlayRef, active: !!char, onClose: onClose, initialSelector: '.overlay-close' });
 
 	useEffect(function () {
 		if (!char) return undefined;
@@ -49,44 +52,6 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, r
 			if (el && typeof el.focus === 'function' && document.contains(el)) el.focus();
 		};
 	}, [char]);
-
-	/* Esc 关闭 */
-	useEffect(function () {
-		if (!char) return undefined;
-		function onKey(e) {
-			if (e.key === 'Escape') onClose();
-		}
-		window.addEventListener('keydown', onKey);
-		return function () { window.removeEventListener('keydown', onKey); };
-	}, [char, onClose]);
-
-	/* Tab 焦点陷阱：焦点不出 overlay */
-	function onOverlayKeyDown(e) {
-		if (e.key !== 'Tab') return;
-		var root = overlayRef.current;
-		if (!root) return;
-		var nodes = Array.prototype.filter.call(
-			root.querySelectorAll(FOCUSABLE),
-			function (el) { return el.offsetParent !== null; }
-		);
-		if (!nodes.length) {
-			e.preventDefault();
-			return;
-		}
-		var first = nodes[0];
-		var last = nodes[nodes.length - 1];
-		var active = document.activeElement;
-		if (!root.contains(active)) {
-			e.preventDefault();
-			first.focus();
-		} else if (e.shiftKey && active === first) {
-			e.preventDefault();
-			last.focus();
-		} else if (!e.shiftKey && active === last) {
-			e.preventDefault();
-			first.focus();
-		}
-	}
 
 	/* 格上拼音条（type10）：拼音写进舞台顶部窄条，与字帖格子同形态 */
 	function syncBar(text) {
@@ -144,7 +109,6 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, r
 			aria-modal="true"
 			aria-label="单字放大预览"
 			onClick={onClose}
-			onKeyDown={onOverlayKeyDown}
 		>
 			<div className="overlay-inner" onClick={function (e) { e.stopPropagation(); }}>
 				<button ref={closeRef} type="button" className="overlay-close" aria-label="关闭" onClick={onClose}>×</button>
@@ -158,6 +122,8 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, r
 					'--char-dy': String(dy || 0),
 					/* 字体粗细（A1）：与字帖格子同源 */
 					'--char-weight': String(FONT_WEIGHT_NUM[weight] || 400),
+					/* 笔画加粗（C-c）：与字帖格子同源，字号 × inkWidth/1000 */
+					'--char-stroke': ((Number(inkWidth) || 0) / 1000) + 'em',
 					/* 字占格比例（A2）：与字帖格子同源 */
 					'--char-scale': String(scale == null ? 0.725 : scale),
 					/* 宽高比：舞台高 = 宽 × ratio（与字帖格子同源） */
@@ -171,7 +137,11 @@ export function BigPreview({ char, onClose, strokeAnim, zg, isPy, bar, dx, dy, r
 					} : {})}
 				/>
 				<div className="overlay-actions">
-					<button type="button" className="rp-btn rp-btn-primary" onClick={play} disabled={animating || strokeAnim === false}>播放笔顺</button>
+					<button type="button" className="rp-btn rp-btn-primary" onClick={play}
+					disabled={animating || strokeAnim === false}
+					title={strokeAnim === false ? '当前字暂无笔顺数据' : undefined}>
+					{animating ? <><span className="rp-spinner" aria-hidden="true" />播放中…</> : '播放笔顺'}
+				</button>
 				</div>
 			</div>
 		</div>

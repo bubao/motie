@@ -21,11 +21,24 @@ type Options struct {
 
 var ErrAlreadyRunning = errors.New("已有一个 motie 实例在运行")
 
+/* AlreadyRunningError：携带已运行实例的实际端口。
+ * 首实例可能因默认端口被占而顺延（见 ListenAvailable），此时新进程需要知道
+ * 真正提供服务的端口才能为其打开窗口，而不是只报「已在运行」。 */
+type AlreadyRunningError struct {
+	Port int
+}
+
+func (e *AlreadyRunningError) Error() string {
+	return "已有一个 motie 实例在运行（端口 " + strconv.Itoa(e.Port) + "）"
+}
+
+func (e *AlreadyRunningError) Is(target error) bool { return target == ErrAlreadyRunning }
+
 const probeTimeout = 400 * time.Millisecond
 
 /* DetectRunning 探测目标端口是否已是 motie 实例（GET /api/config 的 app == "motie"）。 */
 func DetectRunning(bind string, port int) (bool, error) {
-	url := fmt.Sprintf("http://%s/api/config", net.JoinHostPort(bind, strconv.Itoa(port)))
+	url := fmt.Sprintf("http://%s/api/config", net.JoinHostPort(clientHost(bind), strconv.Itoa(port)))
 	client := &http.Client{Timeout: probeTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -39,6 +52,22 @@ func DetectRunning(bind string, port int) (bool, error) {
 		return false, nil
 	}
 	return meta.App == "motie", nil
+}
+
+/* FindRunning 在 preferred..preferred+9 区间（与 ListenAvailable 同区间）探测已有的
+ * motie 实例，返回其实际端口。首实例可能因默认端口被占而顺延运行，只探测首选端口
+ * 会漏掉它——新进程将另起一个服务并破坏单实例语义。 */
+func FindRunning(bind string, preferred int) (int, bool, error) {
+	for p := preferred; p <= preferred+9; p++ {
+		ok, err := DetectRunning(bind, p)
+		if err != nil {
+			return 0, false, err
+		}
+		if ok {
+			return p, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 /* ListenAvailable 从 preferred 起向后顺延（最多 10 个），返回可用 listener 与实际端口。 */
@@ -76,12 +105,12 @@ func Run(ctx context.Context, a *app.App, opts Options, onReady func(port int)) 
 		preferred = cfg.DefaultPort
 	}
 
-	running, err := DetectRunning(bind, preferred)
+	runningPort, running, err := FindRunning(bind, preferred)
 	if err != nil {
 		return err
 	}
 	if running {
-		return ErrAlreadyRunning
+		return &AlreadyRunningError{Port: runningPort}
 	}
 
 	ln, port, err := ListenAvailable(bind, preferred)

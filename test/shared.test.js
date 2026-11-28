@@ -25,7 +25,12 @@ function makeStorage(initial) {
  * （Config 状态不跨测试串，与旧版逐文件 eval 语义一致）。 */
 var CORE_BUNDLE = null;
 function loadCore(storage) {
-	var win = { localStorage: storage || makeStorage(), ZITIE_BOOT: {} };
+	/* location：share 模块拼 URL 用（encodeShare）；其余用例不读 */
+	var win = {
+		localStorage: storage || makeStorage(),
+		ZITIE_BOOT: {},
+		location: { protocol: 'https:', host: 'example.com', pathname: '/index.html', search: '', hash: '' }
+	};
 	global.window = win;
 	if (!CORE_BUNDLE) {
 		var result = esbuild.buildSync({
@@ -97,6 +102,16 @@ test('normalizeField：int / percent 区间夹取', function () {
 	/* 控笔练习行数上限 200（P：控笔扩充） */
 	assert.strictEqual(Z.normalizeField('ControlRows', 999), 200);
 	assert.strictEqual(Z.normalizeField('ControlRows', -1), 0);
+	/* 笔画粗细（C-c）：0–80 夹取，默认 0 = 不加粗 */
+	assert.strictEqual(Z.DEFAULTS.InkWidth, 0);
+	assert.strictEqual(Z.normalizeField('InkWidth', 999), Z.MAX_INK_WIDTH);
+	assert.strictEqual(Z.normalizeField('InkWidth', -5), Z.MIN_INK_WIDTH);
+	assert.strictEqual(Z.normalizeField('InkWidth', 40), 40);
+	/* PNG 分辨率（C-e）：96–384dpi 夹取，默认 144 */
+	assert.strictEqual(Z.DEFAULTS.PngDpi, 144);
+	assert.strictEqual(Z.normalizeField('PngDpi', 999), Z.MAX_PNG_DPI);
+	assert.strictEqual(Z.normalizeField('PngDpi', 1), Z.MIN_PNG_DPI);
+	assert.strictEqual(Z.normalizeField('PngDpi', 288), 288);
 });
 
 test('控笔图案库：CONTROL_PATHS 覆盖全部 CONTROL_PATTERN_KEYS', function () {
@@ -130,6 +145,21 @@ test('normalizeField：text 截断与 bool 类型守卫', function () {
 test('normalizeField：未登记字段原样返回', function () {
 	var Z = loadCore();
 	assert.strictEqual(Z.normalizeField('whatever', 1), 1);
+});
+
+/* U3：空内容判定是导出 / 打印 / 分享提示的共同口径，需与 renderPages 前置校验一致 */
+test('hasExportableContent：与导出前置校验同源（U3）', function () {
+	var Z = loadCore();
+	assert.strictEqual(Z.hasExportableContent({ Mode: 'normal', Content: '永' }), true);
+	assert.strictEqual(Z.hasExportableContent({ Mode: 'normal', Content: '' }), false);
+	assert.strictEqual(Z.hasExportableContent({ Mode: 'normal', Content: '   \n　' }), false);
+	assert.strictEqual(Z.hasExportableContent({ Mode: 'english', Content: 'hello' }), true);
+	assert.strictEqual(Z.hasExportableContent({ Mode: 'stroke', Content: '' }), false);
+	/* 控笔图案由配置生成，不依赖正文 */
+	assert.strictEqual(Z.hasExportableContent({ Mode: 'control', Content: '' }), true);
+	/* 脏数据（null / undefined）按空处理，不抛错 */
+	assert.strictEqual(Z.hasExportableContent(null), false);
+	assert.strictEqual(Z.hasExportableContent({}), false);
 });
 
 /* ---------- Config 持久化 ---------- */
@@ -876,6 +906,25 @@ test('buildZgSvg：虚线密度与形态（划线 / 圆点）', function () {
 	assert.ok(dot.indexOf('stroke-linecap="round"') >= 0, '圆点需要 round 端头');
 });
 
+test('buildZgSvg：米字格辅助线细分——十字 / 对角线 / 内框同为内部线（划线 / 圆点 / 点划线，C-g）', function () {
+	var Z = loadCore();
+	/* 米字回字格（type3）：默认内部虚线（划线），外框实线 */
+	var base = Z.buildZgSvg({ type: '3' });
+	assert.ok(/stroke-dasharray="4,4"/.test(base), '默认划线虚线');
+	assert.strictEqual((base.match(/<path[^>]*>/g) || []).length, 6, '外框 + 十字2 + 对角2 + 内框1');
+	/* 圆点：十字 / 对角线 / 内框都变点线，且外框保持实线 */
+	var dot = Z.buildZgSvg({ type: '3', innerMode: 'dashed', dashStyle: 'dot' });
+	assert.strictEqual((dot.match(/stroke-dasharray="0.1,5.5"/g) || []).length, 5, '5 条内部线均为点线');
+	var borderPath = (dot.match(/<path[^>]*stroke-width="2"[^>]*>/g) || [])[0] || '';
+	assert.ok(borderPath && borderPath.indexOf('stroke-dasharray') === -1, '外框（2× 宽）保持实线');
+	/* 点划线与密度同样作用于内部线 */
+	var dd = Z.buildZgSvg({ type: '2', dashStyle: 'dashdot', dashDensity: 2 });
+	assert.ok(/stroke-dasharray="16,6,2,6"/.test(dd), '点划线 × 200% 密度');
+	/* 内部线关闭后仅剩外框 */
+	var none = Z.buildZgSvg({ type: '3', innerMode: 'none' });
+	assert.strictEqual((none.match(/<path[^>]*>/g) || []).length, 1);
+});
+
 test('resolveZgOptions：旧配置按预设色派生，渲染契约不变', function () {
 	var Z = loadCore();
 	/* 旧配置只有 ZgType / ZgColor：颜色取预设，线型 / 线宽走默认 */
@@ -1450,6 +1499,269 @@ test('ConfigSchema：练习密度与大小写配对字段已登记并归一化',
 	assert.strictEqual(Z.normalizeField('BlankColEvery', 'x'), 0, '非数字回退默认');
 	assert.strictEqual(Z.normalizeField('EngPairCase', true), true);
 	assert.strictEqual(Z.normalizeField('EngPairCase', 'yes'), false, '非 bool 回退默认');
+});
+
+test('分享链接：编解码往返（内容 / 标题 / 版式字段含 Mode）', function () {
+	var Z = loadCore();
+	var cfg = Object.assign({}, Z.DEFAULTS, {
+		Mode: 'hanzi',
+		Template: 'trace3',
+		TraceCount: 4,
+		Title: '早读',
+		Content: '天地玄黄 宇宙洪荒'
+	});
+	var res = Z.encodeShare(cfg);
+	assert.ok(res.ok, '短内容应编码成功');
+	assert.strictEqual(res.url.indexOf('#s='), 'https://example.com/index.html'.length, 'hash 直接拼在文档地址后');
+	var fields = Z.decodeShare(res.hash);
+	assert.ok(fields, '可解回');
+	assert.strictEqual(fields.Mode, 'hanzi');
+	assert.strictEqual(fields.Template, 'trace3');
+	assert.strictEqual(fields.TraceCount, 4);
+	assert.strictEqual(fields.Title, '早读');
+	assert.strictEqual(fields.Content, '天地玄黄 宇宙洪荒');
+	/* 全局偏好不进载荷（跟随打开者本机） */
+	assert.strictEqual(fields.Theme, undefined, 'Theme 不分享');
+	assert.strictEqual(fields.FontSource, undefined, '字体来源不分享');
+});
+
+test('分享链接：损坏 / 版本不符返回 null', function () {
+	var Z = loadCore();
+	assert.strictEqual(Z.decodeShare(''), null, '空串');
+	assert.strictEqual(Z.decodeShare('#s=!!!不是base64!!!'), null, '非法 base64');
+	assert.strictEqual(Z.decodeShare('#s=' + Buffer.from('{"v":1}', 'utf8').toString('base64')), null, '缺 d 字段');
+	var future = Buffer.from(JSON.stringify({ v: 999, d: { Mode: 'hanzi' } }), 'utf8').toString('base64')
+		.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	assert.strictEqual(Z.decodeShare('#s=' + future), null, '未来版本不误解析');
+});
+
+test('分享链接：超长内容降级为不生成 URL', function () {
+	var Z = loadCore();
+	var cfg = Object.assign({}, Z.DEFAULTS, { Content: '永'.repeat(5000) });
+	var res = Z.encodeShare(cfg);
+	assert.strictEqual(res.ok, false);
+	assert.strictEqual(res.reason, 'too-long');
+	assert.strictEqual(res.chars, 5000);
+	assert.ok(res.urlLength > Z.MAX_SHARE_URL_CHARS, '确实超限');
+});
+
+test('分享链接：shareFromLocation 只认 #s=', function () {
+	var Z = loadCore();
+	var cfg = Object.assign({}, Z.DEFAULTS, { Content: '你好' });
+	var res = Z.encodeShare(cfg);
+	assert.ok(Z.shareFromLocation({ hash: res.hash }).Content === '你好', '标准 hash');
+	assert.strictEqual(Z.shareFromLocation({ hash: '' }), null, '无标记');
+	assert.strictEqual(Z.shareFromLocation({ hash: '#x=abc' }), null, '其它 hash 参数不误触');
+	assert.strictEqual(Z.shareFromLocation({ hash: '#s=%%%坏载荷' }), null, '损坏载荷');
+});
+
+test('PNG 导出文件名：标题清洗 / 时间戳 / 多页页码', function () {
+	var Z = loadCore();
+	assert.match(Z.pngFilename('', 0, 1), /^墨帖-\d{8}-\d{4}\.png$/, '无标题');
+	assert.match(Z.pngFilename('早读', 0, 1), /^墨帖-早读-\d{8}-\d{4}\.png$/, '含标题');
+	/* Windows / 路径非法字符统一替换为 - */
+	assert.match(
+		Z.pngFilename('a/b:c*d?e"f<g>h|i\\j', 0, 1),
+		/^墨帖-a-b-c-d-e-f-g-h-i-j-\d{8}-\d{4}\.png$/,
+		'非法字符清洗'
+	);
+	assert.match(Z.pngFilename('早读', 2, 5), /^墨帖-早读-\d{8}-\d{4}-p3\.png$/, '多页带页码');
+	/* 超长标题截断到 40 字符（清洗后） */
+	var longName = Z.pngFilename('字'.repeat(60), 0, 1);
+	assert.ok(longName.indexOf('-' + '字'.repeat(40) + '-') > 0, '超长标题截断 40');
+});
+
+test('元信息：ShowScore 默认关闭并随快照持久化', function () {
+	var Z = loadCore();
+	assert.strictEqual(Z.DEFAULTS.ShowScore, false);
+	Z.saveConfig(Object.assign({}, Z.DEFAULTS, { ShowScore: true }));
+	assert.strictEqual(Z.loadConfig().ShowScore, true, '落盘后可读回');
+});
+
+test('多音字：行级语境取音与单元对齐（getLinePinyins）', function () {
+	var Z = loadCore();
+	/* 迷你替身：词级定音表 + 逐字回退（真实 pinyin-pro 行为已用 vendor 文件实测：
+	 * 「长大」zhǎng dà / 「长沙」cháng shā / array 模式逐元素对齐） */
+	var DICT = { '长大': ['zhǎng', 'dà'], '长沙': ['cháng', 'shā'], '还可以': ['hái', 'kě', 'yǐ'] };
+	var SINGLE = { 长: 'cháng', 大: 'dà', 还: 'hái', 可: 'kě', 以: 'yǐ', 沙: 'shā' };
+	global.window.pinyinPro = function (text, opts) {
+		if (opts && opts.type === 'array') {
+			if (Object.prototype.hasOwnProperty.call(DICT, text)) return DICT[text];
+			return String(text).split('').map(function (ch) { return Object.prototype.hasOwnProperty.call(SINGLE, ch) ? SINGLE[ch] : ch; });
+		}
+		var arr = global.window.pinyinPro(text, { type: 'array' });
+		return Array.isArray(arr) ? arr.join(' ') : '';
+	};
+	Z.resetPinyin();
+	assert.deepStrictEqual(Z.getLinePinyins([{ char: '长' }, { char: '大' }]), ['zhǎng', 'dà'], '词中定音');
+	assert.deepStrictEqual(Z.getLinePinyins([{ char: '长' }]), ['cháng'], '单字回退首音');
+	assert.deepStrictEqual(
+		Z.getLinePinyins([{ char: '还' }, { char: '' }, { char: '可' }, { char: '以' }]),
+		['hái', '', 'kě', 'yǐ'],
+		'blank 格不参与查询且保持空位'
+	);
+	assert.deepStrictEqual(
+		Z.getLinePinyins([{ char: 'A' }, { char: '可' }]),
+		['', 'kě'],
+		'非汉字不给拼音'
+	);
+});
+
+
+/* 打印范围（D3 / web-features.md）：文本 → 0-based 页码集合 */
+(function () {
+	var Z = loadCore();
+	function sort(set) { return Array.from(set).sort(function (a, b) { return a - b; }); }
+	assert.deepStrictEqual(parseOf(''), { all: true, invalid: false }, '空文本 = 全部');
+	assert.deepStrictEqual(parseOf('   '), { all: true, invalid: false }, '空白 = 全部');
+	assert.deepStrictEqual(parseOf('2', 5), { all: false, invalid: false, pages: [1] }, '单页');
+	assert.deepStrictEqual(parseOf('1,3-5', 6), { all: false, invalid: false, pages: [0, 2, 3, 4] }, '混合区间');
+	assert.deepStrictEqual(parseOf('1-3', 3), { all: false, invalid: false, pages: [0, 1, 2] }, '全区间');
+	assert.strictEqual(parseOf('0', 3).invalid, true, '0 越界');
+	assert.strictEqual(parseOf('4', 3).invalid, true, '超过总页数');
+	assert.strictEqual(parseOf('3-1', 5).invalid, true, '倒序区间');
+	assert.strictEqual(parseOf('abc', 5).invalid, true, '非数字');
+	assert.strictEqual(parseOf('1,,2', 5).invalid, true, '空项');
+	assert.strictEqual(parseOf('2', 0).all, true, '无页数按全部处理');
+
+	function parseOf(text, total) {
+		total = total === undefined ? 5 : total;
+		var r = Z.parsePageRange(text, total);
+		if (r.invalid) return { invalid: true };
+		if (r.all) return { all: true, invalid: false };
+		return { all: false, invalid: false, pages: sort(r.set) };
+	}
+})();
+
+
+/* 分享二维码（D4）：文本 → 模块矩阵；空串 / 超长降级 */
+(function () {
+	var Z = loadCore();
+	var m1 = Z.buildQrMatrix('https://example.com/index.html#s=AAAA');
+	assert.strictEqual(m1.ok, true, '正常链接可编码');
+	assert.ok(m1.size > 0 && m1.cells.length === m1.size * m1.size, '矩阵尺寸一致');
+	assert.strictEqual(Z.buildQrMatrix('').ok, false, '空串拒绝');
+	assert.strictEqual(Z.buildQrMatrix('   ').ok, false, '空白拒绝');
+	assert.strictEqual(Z.buildQrMatrix('A'.repeat(3000)).reason, 'too-long', '超长返回 too-long');
+})();
+
+test('traceAlphaOf：TraceRatio 连续可调（Z1=C-a）', function () {
+	var Z = loadCore();
+	/* 默认 50%：与旧 auto=0.5 行为一致 */
+	assert.ok(Math.abs(Z.traceAlphaOf(Object.assign({}, Z.DEFAULTS)) - Z.DEFAULTS.InkAlpha * 0.5) < 1e-9);
+	assert.ok(Math.abs(Z.traceAlphaOf({ InkAlpha: 0.8, TraceRatio: 100 }) - 0.8) < 1e-9);
+	assert.ok(Math.abs(Z.traceAlphaOf({ InkAlpha: 0.8, TraceRatio: 10 }) - 0.08) < 1e-9);
+	/* 非法值回退默认，不产生 NaN / 负值 */
+	var bad = Z.traceAlphaOf({ InkAlpha: 0, TraceRatio: 0 });
+	assert.ok(bad > 0 && isFinite(bad), '非法输入应回退 DEFAULTS');
+});
+
+test('SheetLayout.compute：每页页首标题与字号（Z2=C-b）', function () {
+	var Z = loadCore();
+	var base = { content: '永'.repeat(96), title: '练习', cols: 8 };
+	/* 默认仅首页 */
+	var legacy = Z.SheetLayout.compute(base);
+	assert.strictEqual(legacy.pages[0].title, '练习');
+	assert.strictEqual(legacy.pages[1].title, '');
+	assert.strictEqual(legacy.showPageTitle, false);
+	/* 开启后每页显示，且每页都占一行标题位 */
+	var each = Z.SheetLayout.compute(Object.assign({}, base, { showPageTitle: true, pageTitleScale: 60 }));
+	assert.deepStrictEqual(each.pages.map(function (p) { return p.title; }), ['练习', '练习']);
+	assert.deepStrictEqual(each.pages.map(function (p) { return p.lines.length; }), [each.rows - 1, each.rows - 1]);
+	assert.strictEqual(each.showPageTitle, true);
+	assert.strictEqual(each.pageTitleScale, 60);
+	/* 无标题内容不受开关影响 */
+	var noTitle = Z.SheetLayout.compute({ content: '永'.repeat(96), title: '', cols: 8, showPageTitle: true });
+	assert.deepStrictEqual(noTitle.pages.map(function (p) { return p.title; }), ['', '']);
+	assert.strictEqual(noTitle.showPageTitle, false);
+});
+
+test('页级删页 / 合并 helpers（Z3）', function () {
+	var Z = loadCore();
+	var CM = Z.ContentModel;
+	/* 可渲染序号：天0 地1 玄2 黄3 | 宇4 宙5 洪6 荒7 */
+	assert.strictEqual(CM.removeCharsRange('天地玄黄\n\n宇宙洪荒', 0, 3, 'hanzi'), '宇宙洪荒');
+	assert.strictEqual(CM.removeCharsRange('天地玄黄\n\n宇宙洪荒', 4, 7, 'hanzi'), '天地玄黄');
+	/* 区间非法时原样返回 */
+	assert.strictEqual(CM.removeCharsRange('天地', 5, 9, 'hanzi'), '天地');
+	/* 合并：显式空行边界删除空行 */
+	assert.strictEqual(CM.mergeAtBoundary('甲乙丙丁\n\n戊己庚辛', 3, 4, 'hanzi'), '甲乙丙丁\n戊己庚辛');
+	/* 自动分页（无空行）不成立 */
+	assert.strictEqual(CM.mergeAtBoundary('甲乙丙丁戊己庚辛', 3, 4, 'hanzi'), null);
+	/* 仅一个换行也不是分页符 */
+	assert.strictEqual(CM.mergeAtBoundary('甲乙丙丁\n戊己庚辛', 3, 4, 'hanzi'), null);
+});
+
+test('SheetLayout.compute：页 src 区间可供页级操作（Z3）', function () {
+	var Z = loadCore();
+	var layout = Z.SheetLayout.compute({ content: '永'.repeat(96), cols: 8 });
+	assert.ok(layout.pages.length >= 2, '应至少两页');
+	layout.pages.forEach(function (p) {
+		assert.notStrictEqual(p.srcFrom, null, '有内容页应有 srcFrom');
+		assert.ok(p.srcTo >= p.srcFrom, 'srcTo >= srcFrom');
+	});
+	for (var i = 1; i < layout.pages.length; i++) {
+		assert.ok(layout.pages[i].srcFrom > layout.pages[i - 1].srcTo, '相邻页区间不重叠');
+	}
+	assert.strictEqual(layout.pages[0].srcFrom, 0);
+	assert.strictEqual(layout.pages[layout.pages.length - 1].srcTo, 95);
+});
+
+test('粘贴长文一键清洗（Z4）', function () {
+	var Z = loadCore();
+	/* trim + 折叠空行 + 汉字后半角标点转全角 */
+	var r1 = Z.ContentModel.cleanImportedText('  天地玄黄  \n\n\n\n宇宙洪荒  ', 'hanzi');
+	assert.strictEqual(r1.text, '天地玄黄\n\n宇宙洪荒');
+	assert.ok(r1.blankLines > 0, '应统计被折叠的空行');
+	/* 汉字后的半角标点统一为全角；英文模式不转换 */
+	var r2 = Z.ContentModel.cleanImportedText('你好,世界!今天天气好吗? yes.', 'hanzi');
+	assert.strictEqual(r2.text, '你好，世界！今天天气好吗？ yes.');
+	assert.strictEqual(r2.puncts, 3);
+	var r3 = Z.ContentModel.cleanImportedText('hello, world!', 'english');
+	assert.strictEqual(r3.text, 'hello, world!');
+	assert.strictEqual(r3.puncts, 0);
+	/* 字间空格是「空临格」，不得清洗 */
+	var r4 = Z.ContentModel.cleanImportedText('天 地  玄 黄', 'hanzi');
+	assert.strictEqual(r4.text, '天 地  玄 黄');
+	/* 干净内容零改动 */
+	var r5 = Z.ContentModel.cleanImportedText('天地\n\n玄黄', 'hanzi');
+	assert.strictEqual(r5.text, '天地\n\n玄黄');
+	assert.strictEqual(r5.blankLines, 0);
+	assert.strictEqual(r5.puncts, 0);
+});
+
+test('纸张底色 / 纹理（C-d）', function () {
+	var Z = loadCore();
+	/* 默认纯白；PaperTint 自定义 hex 覆盖预设 */
+	assert.strictEqual(Z.paperBgOf(Z.DEFAULTS), '#FFFFFF');
+	assert.strictEqual(Z.paperBgOf({ PaperColor: 'cream' }), Z.PAPER_COLORS.cream);
+	assert.strictEqual(Z.paperBgOf({ PaperColor: 'rice', PaperTint: '#E8DCC0' }), '#e8dcc0');
+	/* 非法 tint / 未知预设回退 */
+	assert.strictEqual(Z.paperBgOf({ PaperColor: 'nope', PaperTint: 'red' }), '#FFFFFF');
+	/* 纹理：none / 未知 → null；fiber / speckle 为 SVG data URI 且确定性一致 */
+	assert.strictEqual(Z.paperTextureUri({ PaperTexture: 'none' }), null);
+	assert.strictEqual(Z.paperTextureUri({}), null);
+	var a = Z.paperTextureUri({ PaperTexture: 'fiber' });
+	var b = Z.paperTextureUri({ PaperTexture: 'fiber' });
+	assert.ok(a && a.indexOf('data:image/svg+xml') === 0);
+	assert.strictEqual(a, b, '同种子生成应稳定');
+	assert.ok(a.indexOf('%3Csvg') !== -1 || a.indexOf('<svg') !== -1, '应为内联 SVG');
+	assert.ok(Z.paperTextureUri({ PaperTexture: 'speckle' }).indexOf('data:image/svg+xml') === 0);
+});
+
+test('打印缩放（C-f）', function () {
+	var Z = loadCore();
+	/* 默认配置（A4 210mm）：自动缩到安全宽度 */
+	var auto = Z.printScaleOf(Z.DEFAULTS);
+	assert.ok(Math.abs(auto - Z.SAFE_PRINT_WIDTH_MM / 210) < 1e-9, 'A4 应按安全宽度缩小');
+	/* 页宽不超过安全宽度：不缩 */
+	assert.strictEqual(Z.printScaleOf({ Page: { width: 190 }, PrintScale: 0 }), 1);
+	/* 手动百分比优先；上限 100，不放大大于 100% */
+	assert.strictEqual(Z.printScaleOf({ Page: { width: 210 }, PrintScale: 60 }), 0.6);
+	assert.strictEqual(Z.printScaleOf({ Page: { width: 210 }, PrintScale: 120 }), 1);
+	/* 非法输入回退 */
+	assert.strictEqual(Z.printScaleOf(null), 1);
+	assert.strictEqual(Z.printScaleOf({ Page: { width: 0 }, PrintScale: 0 }), 1);
 });
 
 console.log('');

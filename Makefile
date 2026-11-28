@@ -5,16 +5,22 @@
 .PHONY: all help \
         build build-frontend test test-backend test-frontend \
         lint fmt generate check-contract \
-        run dist clean version ci release-check \
+        run dist clean version ci release release-check \
         gen-assets gen-resources gen-windows-resources gen-linux-icons swift-ui \
         package app-macos app-windows app-linux \
+        native-linux native-windows \
         goreleaser goreleaser-snapshot
 
 BINARY_NAME := motie
 BIN_DIR     := bin
 DIST_DIR    := dist-desktop
-VERSION     ?= $(shell (git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0") | tr -d '\r\n ' | sed 's/^v//')
-LDFLAGS     := -s -w -X main.Version=$(VERSION)
+VERSION     ?= $(shell (cat VERSION 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || echo "0.0.1") | tr -d '\r\n ' | sed 's/^v//')
+GIT_COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
+BUILD_DATE  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+# main.* 与 internal/version.* 双包同注入，保证启动日志 / REST 元信息 / updater 口径一致
+LDFLAGS     := -s -w \
+               -X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT) -X main.BuildDate=$(BUILD_DATE) \
+               -X motie/internal/version.Version=$(VERSION) -X motie/internal/version.GitCommit=$(GIT_COMMIT) -X motie/internal/version.BuildDate=$(BUILD_DATE)
 
 BLUE    := \033[0;34m
 GREEN   := \033[0;32m
@@ -45,12 +51,15 @@ help:
 	@echo ""
 	@echo "  $(GREEN)[打包发版]$(RESET)"
 	@echo "    make gen-resources    生成全部打包资源（品牌资产 / Windows syso / Linux 图标）"
+	@echo "    make native-linux     构建 Linux 原生壳 build/motie-shell（需目标机 GTK3 + WebKit2GTK）"
+	@echo "    make native-windows   构建 Windows 原生壳 build/motie-shell.exe（需目标机 .NET 8 SDK）"
 	@echo "    make app-macos        打包 macOS（Motie.app zip + dmg，分架构）"
 	@echo "    make app-windows      打包 Windows（GUI exe + 便携 zip + NSIS 安装器）"
 	@echo "    make app-linux        打包 Linux 二进制（amd64/arm64）"
 	@echo "    make package          本机可打包的全部目标（macOS 本机 + Windows + Linux）"
 	@echo "    make goreleaser-snapshot  快照打包（不发布，产物 .goreleaser-dist/）"
 	@echo "    make goreleaser       正式发版（需已打 tag）"
+	@echo "    make release          发版向导（默认 dry-run；真实发布: make release ARGS=--commit）"
 	@echo ""
 	@echo "  $(GREEN)[其他]$(RESET)"
 	@echo "    make dist             交叉编译三平台二进制到 $(DIST_DIR)/"
@@ -80,7 +89,7 @@ build-frontend:
 		echo "   $(BLUE)[INFO]$(RESET) 安装前端依赖 (npm install)..."; \
 		npm install; \
 	fi
-	@if [ ! -s vendor/hanzi-writer.min.js ] || [ ! -s vendor/pinyin-pro.esm.js ]; then \
+	@if [ ! -s web/vendor/hanzi-writer.min.js ] || [ ! -s web/vendor/pinyin-pro.esm.js ]; then \
 		echo "   $(BLUE)[INFO]$(RESET) 下载本地 vendor 资源 (npm run vendor)..."; \
 		npm run vendor; \
 	fi
@@ -143,6 +152,14 @@ swift-ui:
 	@swiftc -O -o build/swift-ui/motie-shell native_macos/main.swift
 	@echo "$(GREEN)[OK]$(RESET) 原生窗口启动器: build/swift-ui/motie-shell"
 
+# Linux / Windows 原生壳需在对应平台构建（本机 macOS 无法编译）：
+# 产物与内核同目录，内核按 <exeDir>/motie-shell(.exe) 自动拉起。详见 doc/native-shells.md
+native-linux:
+	@native_linux/build-linux-shell.sh
+
+native-windows:
+	@powershell -ExecutionPolicy Bypass -File native_windows/build-windows-shell.ps1
+
 # -----------------------------------------------------------------------------
 # 打包发版
 # -----------------------------------------------------------------------------
@@ -164,6 +181,10 @@ goreleaser-snapshot: build-frontend generate
 	@goreleaser release --clean --snapshot
 	@rm -f motie_windows_*.syso
 	@echo "$(GREEN)[OK]$(RESET) 快照构建完成，产物位于 .goreleaser-dist/"
+
+# 发版向导：默认只推导版本 / 校验 / 打印待执行命令；ARGS="--commit" 才写盘并提交
+release:
+	@bash scripts/release.sh $(ARGS)
 
 goreleaser: build-frontend generate
 	@command -v goreleaser >/dev/null 2>&1 || (echo "$(RED)[ERROR]$(RESET) 未检测到 goreleaser: https://goreleaser.com/install/"; exit 1)
